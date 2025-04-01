@@ -24,11 +24,11 @@ import androidx.navigation.NavHostController
 import com.example.augmented_mobile_application.viewmodel.ManualViewModel
 import com.example.augmented_mobile_application.viewmodel.UserViewModel
 import com.example.augmented_mobile_application.model.User
+import com.example.augmented_mobile_application.model.AuthState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import com.example.augmented_mobile_application.ui.theme.DarkGreen
 import com.example.augmented_mobile_application.ui.theme.OffWhite
-
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -36,9 +36,17 @@ import com.example.augmented_mobile_application.ui.theme.OffWhite
 fun UserContentView(
     navController: NavHostController,
     userViewModel: UserViewModel,
-    manualViewModel: ManualViewModel = viewModel()
+    manualViewModel: ManualViewModel = viewModel(),
+    onLogout: () -> Unit
 ) {
-    val user by userViewModel.user.collectAsState()
+    // Get AuthState from ViewModel
+    val authState by userViewModel.authState.collectAsState()
+    
+    // Extract user from AuthState if authenticated
+    val user = when (authState) {
+        is AuthState.Authenticated -> (authState as AuthState.Authenticated).user
+        else -> null
+    }
 
     // Define constant for machine type
     val MACHINE_TYPE = "Motor Mono W22"
@@ -47,8 +55,9 @@ fun UserContentView(
     var selectedRutina by remember { mutableStateOf<String?>(null) }
     val rutinas = listOf("Diaria", "Mensual", "Semestral")
 
-    LaunchedEffect(user.isAuthenticated) {
-        if (!user.isAuthenticated) {
+    // Navigate back to login if not authenticated
+    LaunchedEffect(authState) {
+        if (authState !is AuthState.Authenticated) {
             navController.navigate("login") {
                 popUpTo("userContent") { inclusive = true }
             }
@@ -67,10 +76,21 @@ fun UserContentView(
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBarExample(
-                user = user,
-                onLogout = { userViewModel.logout() }
-            )
+            user?.let {
+                CenterAlignedTopAppBarExample(
+                    user = it,
+                    onLogout = onLogout
+                )
+            } ?: run {
+                // Fallback TopAppBar if user is null
+                TopAppBar(
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = DarkGreen,
+                        titleContentColor = Color.White
+                    ),
+                    title = { Text("Mantenimiento AR") }
+                )
+            }
         }
     ) { innerPadding ->
         Box(
@@ -161,7 +181,7 @@ fun UserContentView(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
-                    onClick = { userViewModel.logout() },
+                    onClick = onLogout,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
@@ -173,7 +193,6 @@ fun UserContentView(
         }
     }
 }
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
