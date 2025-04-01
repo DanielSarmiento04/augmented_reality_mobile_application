@@ -1,4 +1,4 @@
-package com.example.augmented_reality.ui
+package com.example.augmented_mobile_application.ui
 
 import android.annotation.SuppressLint
 import android.graphics.BitmapFactory
