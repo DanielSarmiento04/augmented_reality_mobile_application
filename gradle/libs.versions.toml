@@ -14,9 +14,15 @@ adaptive-suite="1.3.0"
 navigation = "2.6.0"
 lifecycle = "2.8.6"
 
+# Added versions
+core-splashscreen = "1.0.0"
+activity-ktx = "1.9.1"
+retrofit = "2.9.0"
+okhttp = "4.9.1"
+coroutines = "1.7.2"
+arsceneview = "2.1.1"
 
 [libraries]
-
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
@@ -28,6 +34,7 @@ androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-
 
 # Activity
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-activity-ktx = { group = "androidx.activity", name = "activity-ktx", version.ref = "activity-ktx" }
 
 # Compose
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
@@ -40,6 +47,7 @@ androidx-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 androidx-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
 androidx-compose-material3-window-sizeClass = { module = "androidx.compose.material3:material3-window-size-class" }
 androidx-compose-material3-adaptive-navigationSuite = { module = "androidx.compose.material3:material3-adaptive-navigation-suite", version.ref = "adaptive-suite" }
+androidx-compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
 
 # Navigation
 androidx-navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigation" }
@@ -51,6 +59,18 @@ androidx-camera-extensions = { module = "androidx.camera:camera-extensions", ver
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "cameraCore" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "cameraCore" }
 
+# Added libraries
+androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "core-splashscreen" }
+arsceneview = { group = "io.github.sceneview", name = "arsceneview", version.ref = "arsceneview" }
+
+# Http
+retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
+retrofit-converter-gson = { group = "com.squareup.retrofit2", name = "converter-gson", version.ref = "retrofit" }
+okhttp-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-interceptor", version.ref = "okhttp" }
+
+# Coroutines
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 
 [bundles]
 androidx-lifecycle = [
@@ -70,6 +90,15 @@ androidx-camera = [
     "androidx-camera-camera2",
     "androidx-camera-extensions",
     "androidx-camera-lifecycle"
+]
+retrofit = [
+    "retrofit",
+    "retrofit-converter-gson",
+    "okhttp-logging-interceptor"
+]
+coroutines = [
+    "kotlinx-coroutines-core",
+    "kotlinx-coroutines-android"
 ]
 
 [plugins]

@@ -40,36 +40,23 @@ android {
 }
 
 dependencies {
-
-    // http request multiplatform ktor
-    val activity_version = "1.9.1"
-
-    //implementation("com.google.ar:core:1.44.0")
-    implementation("androidx.core:core-splashscreen:1.0.0")
-    implementation("androidx.activity:activity-ktx:$activity_version")
-    implementation("androidx.activity:activity-compose")
-    implementation("androidx.compose.material:material-icons-extended")
-
     // Androidx
-    implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.core.splashscreen)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.activity.ktx)
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.compose.material.icons.extended)
 
     // Augmented Reality
-    implementation("io.github.sceneview:arsceneview:2.1.1")
-
-//    implementation("com.google.ar:core:1.35.0")
-//    implementation("com.google.ar.sceneform.ux:sceneform-ux:1.17.0")
+    implementation(libs.arsceneview)
 
     // Http Requests
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.9.1")
+    implementation(libs.bundles.retrofit)
 
-    // Coroutines and StateFlow
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.2")
+    // Coroutines
+    implementation(libs.bundles.coroutines)
 
     // Testing
     testImplementation(libs.junit)
