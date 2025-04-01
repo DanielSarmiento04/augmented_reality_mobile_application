@@ -1,8 +1,6 @@
 package com.example.augmented_mobile_application.ui
 
 import android.annotation.SuppressLint
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -12,11 +10,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -29,6 +25,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import com.example.augmented_mobile_application.ui.theme.DarkGreen
 import com.example.augmented_mobile_application.ui.theme.OffWhite
+import coil.compose.AsyncImage
+import coil.ImageLoader
+import coil.decode.GifDecoder
+import coil.request.ImageRequest
+import coil.size.Size
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -49,7 +50,7 @@ fun UserContentView(
     }
 
     // Define constant for machine type
-    val MACHINE_TYPE = "Motor Mono W22"
+    val MACHINE_TYPE = "Bomba Centrifuga"
 
     // Only keep the rutina selection
     var selectedRutina by remember { mutableStateOf<String?>(null) }
@@ -64,14 +65,14 @@ fun UserContentView(
         }
     }
 
+    // Create ImageLoader with GIF decoder
     val context = LocalContext.current
-    val imageBitmap = remember {
-        try {
-            val inputStream = context.assets.open("bomba-centrifuga.webp")
-            BitmapFactory.decodeStream(inputStream)?.asImageBitmap()
-        } catch (e: Exception) {
-            null
-        }
+    val imageLoader = remember {
+        ImageLoader.Builder(context)
+            .components {
+                add(GifDecoder.Factory())
+            }
+            .build()
     }
 
     Scaffold(
@@ -118,22 +119,21 @@ fun UserContentView(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                if (imageBitmap != null) {
-                    Image(
-                        bitmap = imageBitmap,
-                        contentDescription = "Bitmap Image",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(200.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Text(
-                        text = "Imagen no disponible",
-                    )
-                }
+                // GIF loader using Coil
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data("file:///android_asset/pump/pump.gif")
+                        .size(Size.ORIGINAL)
+                        .build(),
+                    contentDescription = "Animated pump GIF",
+                    imageLoader = imageLoader,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentScale = ContentScale.Fit
+                )
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -145,7 +145,6 @@ fun UserContentView(
                     modifier = Modifier.padding(bottom = 16.dp)
                 )
 
-                // Remove machine dropdown, keep only rutina dropdown
                 EnhancedDropdownMenuField(
                     label = "Frecuencia de mantenimiento",
                     items = rutinas,
@@ -238,14 +237,12 @@ fun CenterAlignedTopAppBarExample(
                         text = { Text("Inicio", color = DarkGreen) },
                         onClick = { 
                             isMenuOpen = false
-                            // Future navigation can be added here
                         }
                     )
                     DropdownMenuItem(
                         text = { Text("Historial de mantenimiento", color = DarkGreen) },
                         onClick = { 
                             isMenuOpen = false 
-                            // Future navigation can be added here
                         }
                     )
                     DropdownMenuItem(
