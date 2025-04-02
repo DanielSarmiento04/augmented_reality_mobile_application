@@ -52,6 +52,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.4.0")
     implementation("io.coil-kt:coil-gif:2.4.0")
 
+    implementation("org.opencv:opencv:4.11.0")
+    
     // Augmented Reality
     implementation(libs.arsceneview)
 
