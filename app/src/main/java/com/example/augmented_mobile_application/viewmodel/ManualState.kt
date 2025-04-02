@@ -7,7 +7,22 @@ import android.graphics.Bitmap
  */
 sealed class ManualState {
     data object Loading : ManualState()
+    
+    /**
+     * Initial state after PDF is loaded but before any pages are rendered
+     */
+    data class Initialized(val pageCount: Int) : ManualState()
+    
+    /**
+     * Success state from the previous implementation for compatibility
+     */
     data class Success(val pages: List<Bitmap>) : ManualState()
+    
+    /**
+     * State representing a single rendered page
+     */
+    data class PageReady(val pageIndex: Int, val page: Bitmap) : ManualState()
+    
     data class Error(val message: String) : ManualState()
 }
 
@@ -19,3 +34,16 @@ data class ZoomPanState(
     val offsetX: Float = 0f,
     val offsetY: Float = 0f
 )
+
+/**
+ * Configuration options for PDF rendering
+ */
+data class PdfRenderConfig(
+    val renderQuality: RenderQuality = RenderQuality.DISPLAY,
+    val useDynamicScale: Boolean = true,
+    val maxScale: Float = 3.0f
+)
+
+enum class RenderQuality {
+    DISPLAY, PRINT
+}

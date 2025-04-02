@@ -2,9 +2,13 @@ package com.example.augmented_mobile_application.viewmodel
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -16,8 +20,10 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 private const val TAG = "ManualViewModel"
+private const val MAX_CACHE_SIZE = 5 // Maximum number of pages to keep in memory
 
 class ManualViewModel : ViewModel() {
     private val _manualState = MutableStateFlow<ManualState>(ManualState.Loading)
@@ -33,8 +39,16 @@ class ManualViewModel : ViewModel() {
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
+    private val _pageCount = MutableStateFlow(0)
+    val pageCount = _pageCount.asStateFlow()
+
+    // Cache for rendered pages
+    private val pageCache = ConcurrentHashMap<Int, Bitmap>()
+    
+    // PDF document resources
     private var currentRenderer: PdfRenderer? = null
     private var currentFileDescriptor: ParcelFileDescriptor? = null
+    private var tempFile: File? = null
 
     fun displayPdf(context: Context, pdfName: String) {
         _isLoading.value = true
@@ -44,10 +58,13 @@ class ManualViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 Log.d(TAG, "Loading PDF with name: $pdfName")
-                val pdfBitmaps = loadPdfFromAssets(context, pdfName)
-                _pdfPages.value = pdfBitmaps
-                _manualState.value = ManualState.Success(pdfBitmaps)
-                Log.d(TAG, "Successfully loaded PDF with ${pdfBitmaps.size} pages")
+                initializePdfDocument(context, pdfName)
+                _manualState.value = ManualState.Initialized(_pageCount.value)
+                // Load first page initially to show something quickly
+                if (_pageCount.value > 0) {
+                    getPageAtIndex(0)
+                }
+                Log.d(TAG, "Successfully initialized PDF with ${_pageCount.value} pages")
             } catch (e: Exception) {
                 val errorMsg = "Error loading PDF: ${e.localizedMessage ?: "Unknown error"}"
                 Log.e(TAG, errorMsg, e)
@@ -59,11 +76,11 @@ class ManualViewModel : ViewModel() {
         }
     }
 
-    private suspend fun loadPdfFromAssets(context: Context, pdfName: String): List<Bitmap> = withContext(Dispatchers.IO) {
+    private suspend fun initializePdfDocument(context: Context, pdfName: String) = withContext(Dispatchers.IO) {
         clearResources() // Clear any previous resources
 
         try {
-            // Get input stream from assets - fix for path structure
+            // Get input stream from assets - handle path structure
             val assetManager = context.assets
             
             // Handle both formats: with and without subfolder
@@ -86,6 +103,7 @@ class ManualViewModel : ViewModel() {
 
             // Create a temporary file
             val tempFile = File(context.cacheDir, "${pdfName.replace("/", "_")}.pdf")
+            this@ManualViewModel.tempFile = tempFile
             val outputStream = FileOutputStream(tempFile)
 
             // Copy asset to temp file
@@ -100,39 +118,172 @@ class ManualViewModel : ViewModel() {
             val renderer = PdfRenderer(fileDescriptor)
             currentRenderer = renderer
 
-            val pageCount = renderer.pageCount
-            Log.d(TAG, "PDF loaded with $pageCount pages")
-            
-            val bitmaps = mutableListOf<Bitmap>()
-
-            // Render each page as a bitmap
-            for (i in 0 until pageCount) {
-                val page = renderer.openPage(i)
-                val bitmap = Bitmap.createBitmap(
-                    page.width * 2, page.height * 2,
-                    Bitmap.Config.ARGB_8888
-                )
-                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                bitmaps.add(bitmap)
-                page.close()
-            }
-
-            bitmaps
+            // Update page count
+            _pageCount.value = renderer.pageCount
+            Log.d(TAG, "PDF initialized with ${renderer.pageCount} pages")
         } catch (e: IOException) {
             Log.e(TAG, "Error loading PDF", e)
             throw IOException("Failed to load PDF: ${e.message}", e)
         }
     }
+    
+    /**
+     * Gets the bitmap for a specific page index.
+     * Uses caching for improved performance.
+     */
+    suspend fun getPageAtIndex(pageIndex: Int): Bitmap? = withContext(Dispatchers.IO) {
+        if (pageIndex < 0 || pageIndex >= _pageCount.value) {
+            Log.e(TAG, "Invalid page index: $pageIndex")
+            return@withContext null
+        }
+        
+        // Return cached page if available
+        pageCache[pageIndex]?.let { return@withContext it }
+        
+        try {
+            val renderer = currentRenderer ?: return@withContext null
+            val page = renderer.openPage(pageIndex)
+            
+            // Create bitmap with appropriate dimensions and density
+            val bitmap = Bitmap.createBitmap(
+                page.width * 2, 
+                page.height * 2,
+                Bitmap.Config.ARGB_8888
+            )
+            
+            // Render the page with high quality
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            
+            // Manage cache size by removing oldest entries if needed
+            if (pageCache.size >= MAX_CACHE_SIZE) {
+                val oldestKey = pageCache.keys().asSequence()
+                    .filter { it != pageIndex }
+                    .firstOrNull()
+                oldestKey?.let { pageCache.remove(it) }
+            }
+            
+            // Cache the newly rendered page
+            pageCache[pageIndex] = bitmap
+            return@withContext bitmap
+        } catch (e: Exception) {
+            Log.e(TAG, "Error rendering page $pageIndex", e)
+            return@withContext null
+        }
+    }
+    
+    /**
+     * Creates a PDF document that can be used for annotation or modification.
+     * This demonstrates using PdfDocument for creation rather than just rendering.
+     */
+    fun createAnnotatedPdf(context: Context, annotations: List<PdfAnnotation>): File? {
+        try {
+            val pdfDocument = PdfDocument()
+            val renderer = currentRenderer ?: return null
+            
+            for (i in 0 until renderer.pageCount) {
+                val page = renderer.openPage(i)
+                
+                // Create a new page in the document
+                val pageInfo = PdfDocument.PageInfo.Builder(
+                    page.width, page.height, i
+                ).create()
+                
+                val documentPage = pdfDocument.startPage(pageInfo)
+                val canvas = documentPage.canvas
+                
+                // Draw the original page content
+                val pageBitmap = Bitmap.createBitmap(
+                    page.width, page.height, Bitmap.Config.ARGB_8888
+                )
+                page.render(pageBitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                canvas.drawBitmap(pageBitmap, 0f, 0f, null)
+                
+                // Add annotations for this page
+                val pageAnnotations = annotations.filter { it.pageIndex == i }
+                drawAnnotations(canvas, pageAnnotations)
+                
+                pdfDocument.finishPage(documentPage)
+                page.close()
+            }
+            
+            // Save the document to a new file
+            val outputFile = File(context.cacheDir, "annotated_pdf_${System.currentTimeMillis()}.pdf")
+            pdfDocument.writeTo(FileOutputStream(outputFile))
+            pdfDocument.close()
+            
+            return outputFile
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating annotated PDF", e)
+            return null
+        }
+    }
+    
+    private fun drawAnnotations(canvas: Canvas, annotations: List<PdfAnnotation>) {
+        val paint = Paint().apply {
+            color = Color.RED
+            strokeWidth = 5f
+            style = Paint.Style.STROKE
+        }
+        
+        val textPaint = Paint().apply {
+            color = Color.RED
+            textSize = 30f
+        }
+        
+        for (annotation in annotations) {
+            when (annotation) {
+                is PdfAnnotation.Rectangle -> {
+                    canvas.drawRect(
+                        annotation.x, 
+                        annotation.y, 
+                        annotation.x + annotation.width, 
+                        annotation.y + annotation.height, 
+                        paint
+                    )
+                }
+                is PdfAnnotation.Text -> {
+                    canvas.drawText(annotation.text, annotation.x, annotation.y, textPaint)
+                }
+            }
+        }
+    }
+
+    fun clearCache() {
+        pageCache.clear()
+    }
 
     private fun clearResources() {
+        clearCache()
         currentRenderer?.close()
         currentFileDescriptor?.close()
         currentRenderer = null
         currentFileDescriptor = null
+        tempFile?.delete()
+        tempFile = null
     }
 
     override fun onCleared() {
         super.onCleared()
         clearResources()
     }
+}
+
+sealed class PdfAnnotation {
+    abstract val pageIndex: Int
+    
+    data class Rectangle(
+        override val pageIndex: Int,
+        val x: Float,
+        val y: Float,
+        val width: Float,
+        val height: Float
+    ) : PdfAnnotation()
+    
+    data class Text(
+        override val pageIndex: Int,
+        val x: Float,
+        val y: Float,
+        val text: String
+    ) : PdfAnnotation()
 }
