@@ -49,8 +49,9 @@ fun UserContentView(
         else -> null
     }
 
-    // Define constant for machine type
+    // Define constant for machine type and PDF path
     val MACHINE_TYPE = "Bomba Centrifuga"
+    val PDF_PATH = "pump/pump"
 
     // Only keep the rutina selection
     var selectedRutina by remember { mutableStateOf<String?>(null) }
@@ -154,6 +155,21 @@ fun UserContentView(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
+                // Update the documentation button to use the PDF path
+                Button(
+                    onClick = {
+                        // Navigate to pump manual using the PDF path
+                        navController.navigate("pumpManual")
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
+                ) {
+                    Text(text = "Ver Manual de la Bomba")
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Add a specific button for maintenance documentation
                 Button(
                     onClick = {
                         navController.navigate("manualView/$MACHINE_TYPE")
@@ -161,7 +177,7 @@ fun UserContentView(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                 ) {
-                    Text(text = "Ver Documentación")
+                    Text(text = "Ver Documentación de Mantenimiento")
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
