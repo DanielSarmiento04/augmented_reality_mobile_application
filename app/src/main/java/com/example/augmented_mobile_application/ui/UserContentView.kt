@@ -51,7 +51,7 @@ fun UserContentView(
 
     // Define constant for machine type and PDF path
     val MACHINE_TYPE = "Bomba Centrifuga"
-    val PDF_PATH = "pump/pump"
+    val PDF_NAME = "pump" // This should match the subfolder name in assets
 
     // Only keep the rutina selection
     var selectedRutina by remember { mutableStateOf<String?>(null) }
@@ -155,11 +155,12 @@ fun UserContentView(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // Update the documentation button to use the PDF path
+                // Fixed navigation with correct PDF path parameter
                 Button(
                     onClick = {
-                        // Navigate to pump manual using the PDF path
-                        navController.navigate("pumpManual")
+                        // Navigate to the manual view with the correct parameter
+                        // The ManualViewModel will handle adding the subfolder path
+                        navController.navigate("manualView/$PDF_NAME")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
@@ -169,18 +170,6 @@ fun UserContentView(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Add a specific button for maintenance documentation
-                Button(
-                    onClick = {
-                        navController.navigate("manualView/$MACHINE_TYPE")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
-                ) {
-                    Text(text = "Ver Documentación de Mantenimiento")
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
                     onClick = {

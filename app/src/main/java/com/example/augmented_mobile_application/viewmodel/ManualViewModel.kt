@@ -10,115 +10,129 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 
-class ManualViewModel : ViewModel() {
+private const val TAG = "ManualViewModel"
 
+class ManualViewModel : ViewModel() {
+    private val _manualState = MutableStateFlow<ManualState>(ManualState.Loading)
+    val manualState: StateFlow<ManualState> = _manualState.asStateFlow()
+
+    // For backward compatibility with existing code
     private val _pdfPages = MutableStateFlow<List<Bitmap>>(emptyList())
-    val pdfPages: StateFlow<List<Bitmap>> = _pdfPages
+    val pdfPages = _pdfPages.asStateFlow()
 
     private val _errorMessage = MutableStateFlow<String?>(null)
-    val errorMessage: StateFlow<String?> = _errorMessage
+    val errorMessage = _errorMessage.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
-    val isLoading: StateFlow<Boolean> = _isLoading
+    val isLoading = _isLoading.asStateFlow()
+
+    private var currentRenderer: PdfRenderer? = null
+    private var currentFileDescriptor: ParcelFileDescriptor? = null
 
     fun displayPdf(context: Context, pdfName: String) {
+        _isLoading.value = true
+        _errorMessage.value = null
+        _manualState.value = ManualState.Loading
+
         viewModelScope.launch {
-            _isLoading.value = true
-            _errorMessage.value = null
-            
             try {
-                // Ensure pdfName doesn't already have .pdf extension
-                val cleanPdfName = pdfName.removeSuffix(".pdf")
-                val pdfPages = renderPdfFromAssets(context, cleanPdfName)
-                _pdfPages.value = pdfPages
-            } catch (e: IOException) {
-                Log.e("ManualViewModel", "Error loading PDF: ${e.message}", e)
-                _errorMessage.value = "Error al cargar el PDF: ${e.message ?: "Archivo no encontrado"}"
+                Log.d(TAG, "Loading PDF with name: $pdfName")
+                val pdfBitmaps = loadPdfFromAssets(context, pdfName)
+                _pdfPages.value = pdfBitmaps
+                _manualState.value = ManualState.Success(pdfBitmaps)
+                Log.d(TAG, "Successfully loaded PDF with ${pdfBitmaps.size} pages")
             } catch (e: Exception) {
-                Log.e("ManualViewModel", "Unexpected error: ${e.message}", e)
-                _errorMessage.value = "Error inesperado: ${e.message ?: "Error desconocido"}"
+                val errorMsg = "Error loading PDF: ${e.localizedMessage ?: "Unknown error"}"
+                Log.e(TAG, errorMsg, e)
+                _errorMessage.value = errorMsg
+                _manualState.value = ManualState.Error(errorMsg)
             } finally {
                 _isLoading.value = false
             }
         }
     }
 
-    private suspend fun renderPdfFromAssets(context: Context, pdfName: String): List<Bitmap> = withContext(Dispatchers.IO) {
-        // Generate safe filename for the cache
-        val cacheFileName = pdfName.replace("/", "_") + ".pdf"
-        val file = File(context.cacheDir, cacheFileName)
-        
-        // Log the asset path we're trying to open
-        val assetPath = "$pdfName.pdf"
-        Log.d("ManualViewModel", "Attempting to open asset: $assetPath")
-        
+    private suspend fun loadPdfFromAssets(context: Context, pdfName: String): List<Bitmap> = withContext(Dispatchers.IO) {
+        clearResources() // Clear any previous resources
+
         try {
-            // Copy the PDF from assets to the temp file
-            context.assets.open(assetPath).use { input ->
-                FileOutputStream(file).use { output ->
-                    input.copyTo(output)
-                }
-            }
-        } catch (e: IOException) {
-            // Try alternative path if the first one fails
-            val alternativePath = if (pdfName.contains("/")) pdfName else "pump/$pdfName"
-            Log.d("ManualViewModel", "First path failed, trying alternative: $alternativePath.pdf")
+            // Get input stream from assets - fix for path structure
+            val assetManager = context.assets
             
-            context.assets.open("$alternativePath.pdf").use { input ->
-                FileOutputStream(file).use { output ->
-                    input.copyTo(output)
-                }
+            // Handle both formats: with and without subfolder
+            val assetPath = if (pdfName.contains("/")) {
+                "$pdfName.pdf"
+            } else {
+                "$pdfName/$pdfName.pdf" // Add subfolder path
             }
+            
+            Log.d(TAG, "Attempting to load PDF from assets path: $assetPath")
+            
+            // Try to open the file
+            val inputStream = try {
+                assetManager.open(assetPath)
+            } catch (e: IOException) {
+                // Fallback to just the PDF name if subfolder approach fails
+                Log.w(TAG, "Failed to load from path $assetPath, trying direct filename $pdfName.pdf")
+                assetManager.open("$pdfName.pdf")
+            }
+
+            // Create a temporary file
+            val tempFile = File(context.cacheDir, "${pdfName.replace("/", "_")}.pdf")
+            val outputStream = FileOutputStream(tempFile)
+
+            // Copy asset to temp file
+            inputStream.copyTo(outputStream)
+            inputStream.close()
+            outputStream.close()
+
+            // Open PDF file for rendering
+            val fileDescriptor = ParcelFileDescriptor.open(tempFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            currentFileDescriptor = fileDescriptor
+
+            val renderer = PdfRenderer(fileDescriptor)
+            currentRenderer = renderer
+
+            val pageCount = renderer.pageCount
+            Log.d(TAG, "PDF loaded with $pageCount pages")
+            
+            val bitmaps = mutableListOf<Bitmap>()
+
+            // Render each page as a bitmap
+            for (i in 0 until pageCount) {
+                val page = renderer.openPage(i)
+                val bitmap = Bitmap.createBitmap(
+                    page.width * 2, page.height * 2,
+                    Bitmap.Config.ARGB_8888
+                )
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                bitmaps.add(bitmap)
+                page.close()
+            }
+
+            bitmaps
+        } catch (e: IOException) {
+            Log.e(TAG, "Error loading PDF", e)
+            throw IOException("Failed to load PDF: ${e.message}", e)
         }
-        
-        // List all files in assets for debugging
-        val assetFiles = context.assets.list("")
-        Log.d("ManualViewModel", "Assets in root: ${assetFiles?.joinToString()}")
-        if (assetFiles?.contains("pump") == true) {
-            val pumpFiles = context.assets.list("pump")
-            Log.d("ManualViewModel", "Assets in pump folder: ${pumpFiles?.joinToString()}")
-        }
-        
-        // Create a PDF renderer
-        val fileDescriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        val pdfRenderer = PdfRenderer(fileDescriptor)
-        
-        Log.d("ManualViewModel", "PDF loaded successfully with ${pdfRenderer.pageCount} pages")
-        
-        // Render each page as a bitmap
-        val pages = mutableListOf<Bitmap>()
-        for (i in 0 until pdfRenderer.pageCount) {
-            val page = pdfRenderer.openPage(i)
-            val bitmap = Bitmap.createBitmap(
-                page.width * 2, 
-                page.height * 2, 
-                Bitmap.Config.ARGB_8888
-            )
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            pages.add(bitmap)
-            page.close()
-        }
-        
-        // Close resources
-        pdfRenderer.close()
-        fileDescriptor.close()
-        
-        return@withContext pages
     }
-    
+
+    private fun clearResources() {
+        currentRenderer?.close()
+        currentFileDescriptor?.close()
+        currentRenderer = null
+        currentFileDescriptor = null
+    }
+
     override fun onCleared() {
         super.onCleared()
-        // Clean up any resources when ViewModel is cleared
-        _pdfPages.value.forEach { bitmap ->
-            if (!bitmap.isRecycled) {
-                bitmap.recycle()
-            }
-        }
+        clearResources()
     }
 }
