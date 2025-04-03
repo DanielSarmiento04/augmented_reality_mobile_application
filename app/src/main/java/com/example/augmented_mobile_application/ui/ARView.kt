@@ -20,19 +20,19 @@ import android.graphics.Bitmap
 
 // Correct SceneView 2.2.1 imports
 import io.github.sceneview.ar.ARSceneView
-import io.github.sceneview.ar.arcore.ArFrame
-import io.github.sceneview.ar.node.ArModelNode
-import io.github.sceneview.ar.node.PlacementMode
+import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.math.Position
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.node.ModelNode
 import com.google.ar.core.Config
 import com.google.ar.core.TrackingFailureReason
+import com.google.ar.core.Frame as ArFrame
 
 // OpenCV imports
 import org.opencv.core.Mat
 import org.opencv.android.Utils
 import org.opencv.imgproc.Imgproc
+import org.opencv.core.Size
 import kotlinx.coroutines.launch
 
 private const val TAG = "ARView"
@@ -62,9 +62,9 @@ fun ARView(
         "Mantenimiento completado con éxito"
     )
 
-    // Reference to the ARSceneView and model node
+    // Reference to the ARSceneView
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
-    val modelNodeRef = remember { mutableStateOf<ArModelNode?>(null) }
+    val modelNodeRef = remember { mutableStateOf<ModelNode?>(null) }
     
     // OpenCV setup
     LaunchedEffect(Unit) {
@@ -92,30 +92,37 @@ fun ARView(
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
                     }
                     
-                    // Create and configure the model node
-                    val modelNode = ArModelNode(placementMode = PlacementMode.BEST_AVAILABLE).apply {
+                    // Create model node with correct SceneView 2.2.1 classes
+                    val modelNode = ModelNode(ctx).apply {
                         // Set initial scale and rotation
                         scale = Position(1.0f, 1.0f, 1.0f)
                         rotation = Rotation(0.0f, 0.0f, 0.0f)
                         
-                        // Load the 3D model asynchronously with explicit type parameters
+                        // Load the 3D model asynchronously
                         loadModelGlbAsync(
-                            context = context,
-                            glbFileLocation = "pump/pump_model.glb",
+                            glbFileLocation = "models/pump_model.glb",
                             autoAnimate = true,
-                            scaleToUnits = 0.5f, // Adjust scale as needed
-                            centerOrigin = Position(0.0f, 0.0f, 0.0f),
-                            onError = { exception ->
-                                Log.e(TAG, "Error loading model: ${exception.message}")
-                                isLoadingModel = false
-                            },
-                            onLoaded = { _, _ ->
-                                Log.d(TAG, "Model loaded successfully")
-                                isLoadingModel = false
-                            }
+                            scaleToUnits = 0.5f,
+                            centerOrigin = Position(0.0f, 0.0f, 0.0f)
                         )
+                    }
+                    
+                    // Set up model callbacks
+                    modelNode.onModelLoaded = { model ->
+                        Log.d(TAG, "Model loaded successfully")
+                        isLoadingModel = false
+                    }
+                    
+                    modelNode.onError = { exception ->
+                        Log.e(TAG, "Error loading model: ${exception.message}")
+                        isLoadingModel = false
+                    }
+                    
+                    // Create an anchor node to place the model
+                    val anchorNode = AnchorNode(ctx).apply {
+                        addChild(modelNode)
                         
-                        // Set placement listener to know when the model is placed
+                        // Set placement listener
                         onAnchorChanged = { anchor ->
                             if (anchor != null && !modelPlaced) {
                                 modelPlaced = true
@@ -124,14 +131,26 @@ fun ARView(
                         }
                     }
                     
-                    // Add the model node to the scene
-                    addChild(modelNode)
+                    // Handle tap events to place the model
+                    onTouchAr = { hitResult, _ ->
+                        if (!modelPlaced) {
+                            anchorNode.anchor = hitResult.createAnchor()
+                            modelPlaced = true
+                            instructionStep = 1
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    
+                    // Add the anchor node to the scene
+                    addChild(anchorNode)
                     modelNodeRef.value = modelNode
                     
-                    // Set scene frame update listener for OpenCV processing
-                    onArFrame = { arFrame ->
+                    // Set frame update listener for OpenCV processing
+                    onArFrame = { frame ->
                         // Update tracking state info
-                        val camera = arFrame.camera
+                        val camera = frame.camera
                         if (camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
                             trackingFailureReason = null
                         } else if (camera.trackingState == com.google.ar.core.TrackingState.PAUSED) {
@@ -142,10 +161,16 @@ fun ARView(
                         if (frameProcessingEnabled && camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
                             try {
                                 // Get the camera image
-                                arFrame.acquireCameraImage()?.use { image ->
-                                    // Convert camera image to OpenCV Mat for processing
-                                    // This would be implemented in a real app
-                                    // Currently, we're just preparing the infrastructure
+                                frame.acquireCameraImage()?.use { image ->
+                                    // Basic OpenCV processing pattern - just prepared for future use
+                                    // This is minimal infrastructure, no actual processing yet
+                                    val width = image.width
+                                    val height = image.height
+                                    
+                                    Log.d(TAG, "Processing camera frame: $width x $height")
+                                    
+                                    // TODO: In future iterations, we would convert the image to Mat
+                                    // and apply OpenCV processing using handlePreprocessing()
                                 }
                             } catch (e: Exception) {
                                 Log.e(TAG, "Error processing frame: ${e.message}")
@@ -299,27 +324,37 @@ fun ARView(
     }
 }
 
-// Function to handle preprocessing of frames with OpenCV
+// Improved function to handle preprocessing of frames with OpenCV
 fun handlePreprocessing(inputFrame: Mat): Mat {
     // This function prepares frames for future processing with OpenCV
-    // Currently, we just return a copy of the original frame without modifications
-    // In future iterations, this could include:
-    // - Color space conversion
-    // - Noise reduction
-    // - Edge detection
-    // - Feature extraction
-    
     val processedFrame = inputFrame.clone()
     
     // Log the frame dimensions for debugging
     Log.d(TAG, "Processing frame: ${inputFrame.width()} x ${inputFrame.height()}")
     
-    // You could apply basic transformations here
-    // Example (commented out):
+    // Currently no transformation is applied as per requirements
+    // Just set up for future processing capabilities
+    
+    // Examples of transformations we could apply in the future:
+    // 1. Convert to grayscale:
     // Imgproc.cvtColor(inputFrame, processedFrame, Imgproc.COLOR_RGB2GRAY)
+    
+    // 2. Apply Gaussian blur to reduce noise:
     // Imgproc.GaussianBlur(processedFrame, processedFrame, Size(5.0, 5.0), 0.0)
     
+    // 3. Edge detection:
+    // Imgproc.Canny(processedFrame, processedFrame, 50.0, 150.0)
+    
+    // 4. Image segmentation, contour detection, etc. could also be added
+    
     return processedFrame
+}
+
+// Helper function to convert an OpenCV Mat to Bitmap for display
+fun matToBitmap(mat: Mat): Bitmap {
+    val bitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
+    Utils.matToBitmap(mat, bitmap)
+    return bitmap
 }
 
 
