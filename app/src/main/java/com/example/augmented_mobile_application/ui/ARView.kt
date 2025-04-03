@@ -24,8 +24,10 @@ import io.github.sceneview.ar.node.AnchorNode
 import io.github.sceneview.math.Position
 import io.github.sceneview.math.Rotation
 import io.github.sceneview.node.ModelNode
+import io.github.sceneview.math.Scale
 import com.google.ar.core.Config
 import com.google.ar.core.TrackingFailureReason
+import com.google.ar.core.TrackingState
 import com.google.ar.core.Frame as ArFrame
 
 // OpenCV imports
@@ -92,94 +94,10 @@ fun ARView(
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
                     }
                     
-                    // Create model node with correct SceneView 2.2.1 classes
-                    val modelNode = ModelNode().apply {
-                        // Set initial scale and rotation
-                        scale = Position(1.0f, 1.0f, 1.0f)
-                        rotation = Rotation(0.0f, 0.0f, 0.0f)
-                        
-                        // Load the 3D model asynchronously using the correct method name
-                        loadModel(
-                            context = ctx,
-                            glbFileLocation = "models/pump_model.glb",
-                            autoAnimate = true,
-                            scaleToUnits = 0.5f,
-                            centerOrigin = Position(0.0f, 0.0f, 0.0f)
-                        )
-                    }
+
+
                     
-                    // Set up model load listeners using the correct pattern for SceneView 2.2.1
-                    modelNode.setOnModelLoadedListener { modelInstance ->
-                        Log.d(TAG, "Model loaded successfully")
-                        isLoadingModel = false
-                    }
-                    
-                    modelNode.setOnErrorListener { exception ->
-                        Log.e(TAG, "Error loading model: ${exception.message}")
-                        isLoadingModel = false
-                    }
-                    
-                    // Create an anchor node for the model
-                    val anchorNode = AnchorNode().apply {
-                        // Add the model as a child to this anchor node
-                        children.add(modelNode)
-                        
-                        // Set placement listener
-                        onAnchorChanged = { anchor ->
-                            if (anchor != null && !modelPlaced) {
-                                modelPlaced = true
-                                instructionStep = 1
-                            }
-                        }
-                    }
-                    
-                    // Handle tap events to place the model
-                    setOnTapArPlaneListener { hitResult, _, _ ->
-                        if (!modelPlaced) {
-                            // Create anchor from hit result
-                            val anchor = hitResult.createAnchor()
-                            anchorNode.anchor = anchor
-                            modelPlaced = true
-                            instructionStep = 1
-                        }
-                    }
-                    
-                    // Add the anchor node to the scene
-                    children.add(anchorNode)
-                    modelNodeRef.value = modelNode
-                    
-                    // Set frame update listener for OpenCV processing
-                    updateListener = { frameTime ->
-                        val frame = arCore?.currentFrame
-                        if (frame != null) {
-                            // Update tracking state info
-                            val camera = frame.camera
-                            if (camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                                trackingFailureReason = null
-                            } else if (camera.trackingState == com.google.ar.core.TrackingState.PAUSED) {
-                                trackingFailureReason = camera.trackingFailureReason
-                            }
-                            
-                            // Process frame with OpenCV if enabled
-                            if (frameProcessingEnabled && camera.trackingState == com.google.ar.core.TrackingState.TRACKING) {
-                                try {
-                                    // Get the camera image
-                                    frame.acquireCameraImage()?.use { image ->
-                                        // Basic OpenCV processing pattern - just prepared for future use
-                                        val width = image.width
-                                        val height = image.height
-                                        
-                                        Log.d(TAG, "Processing camera frame: $width x $height")
-                                        
-                                        // TODO: In future iterations, we would convert the image to Mat
-                                        // and apply OpenCV processing using handlePreprocessing()
-                                    }
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error processing frame: ${e.message}")
-                                }
-                            }
-                        }
-                    }
+
                 }
             }
         )
