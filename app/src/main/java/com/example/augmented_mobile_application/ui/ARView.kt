@@ -42,7 +42,6 @@ import androidx.compose.ui.input.pointer.pointerInteropFilter
 import android.view.MotionEvent
 import androidx.compose.ui.ExperimentalComposeUiApi
 
-
 private const val TAG = "ARView"
 
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class, androidx.camera.core.ExperimentalGetImage::class)
@@ -54,7 +53,7 @@ fun ARView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // AR Scene setup and state
+    // AR Scene state management
     var trackingFailureReason by remember { mutableStateOf<TrackingFailureReason?>(null) }
     var modelPlaced by remember { mutableStateOf(false) }
     var frameProcessingEnabled by remember { mutableStateOf(false) }
@@ -71,7 +70,7 @@ fun ARView(
         "Mantenimiento completado con éxito"
     )
 
-    // Reference to the ARSceneView
+    // References to ARSceneView and nodes
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelNodeRef = remember { mutableStateOf<ModelNode?>(null) }
     val anchorNodeRef = remember { mutableStateOf<AnchorNode?>(null) }
@@ -94,11 +93,11 @@ fun ARView(
                 .pointerInteropFilter { event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            // Raycast to check if the model is tapped
+                            // Placeholder for raycast handling
                             arSceneViewRef.value?.let { arSceneView ->
                                 val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
                                 hitResults?.forEach { hit ->
-                                    // Handle the hit
+                                    // Process hit result if needed
                                 }
                             }
                             false
@@ -110,7 +109,7 @@ fun ARView(
                 ARSceneView(ctx).apply {
                     arSceneViewRef.value = this
 
-                    // Configure AR session
+                    // Configure AR session settings
                     configureSession { session, config ->
                         config.focusMode = Config.FocusMode.AUTO
                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
@@ -120,12 +119,12 @@ fun ARView(
 
                     planeRenderer.isEnabled = true
 
-                    // Handle tracking failures
+                    // Handle AR tracking failures
                     onTrackingFailureChanged = { reason ->
                         trackingFailureReason = reason
                     }
 
-                    // Load the model
+                    // Load the pump model from assets/pump/pump.glb
                     scope.launch {
                         try {
                             val modelNode = ModelNode(
@@ -138,18 +137,18 @@ fun ARView(
                             }
                             modelNodeRef.value = modelNode
                             isLoadingModel = false
+                            // Optionally, place the model as soon as it is loaded
+                            modelPlaced = true
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to load model: ${e.message ?: "Unknown error"}")
                             isLoadingModel = false
                         }
                     }
-
-
                 }
             }
         )
 
-        // UI Overlay
+        // UI Overlay for instructions and buttons
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -165,24 +164,19 @@ fun ARView(
                     containerColor = Color.White.copy(alpha = 0.9f)
                 )
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
+                Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         text = machine_selected,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = DarkGreen
                     )
-
                     Spacer(modifier = Modifier.height(8.dp))
-
                     Text(
                         text = instructions[instructionStep],
                         fontSize = 16.sp,
                         color = Color.Black
                     )
-
                     if (isLoadingModel) {
                         LinearProgressIndicator(
                             modifier = Modifier
@@ -191,10 +185,9 @@ fun ARView(
                             color = DarkGreen
                         )
                     }
-
-                    if (trackingFailureReason != null) {
+                    trackingFailureReason?.let { reason ->
                         Text(
-                            text = when (trackingFailureReason) {
+                            text = when (reason) {
                                 TrackingFailureReason.NONE -> "Sin problemas de seguimiento"
                                 TrackingFailureReason.BAD_STATE -> "Sistema AR en mal estado"
                                 TrackingFailureReason.INSUFFICIENT_LIGHT -> "Iluminación insuficiente"
@@ -210,7 +203,7 @@ fun ARView(
                 }
             }
 
-            // Bottom control buttons
+            // Bottom control buttons and maintenance navigation
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -218,10 +211,10 @@ fun ARView(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (modelPlaced) {
-                    // Show the "Inicial Mantenimiento" button when model is placed
+                    // "Inicial Mantenimiento" button
                     Button(
                         onClick = {
-                            // Start maintenance procedure
+                            // Enable frame processing and update the instruction step
                             frameProcessingEnabled = true
                             instructionStep = 1
                         },
@@ -264,7 +257,7 @@ fun ARView(
                                 if (instructionStep < instructions.size - 1) {
                                     instructionStep++
                                 } else {
-                                    // Complete maintenance
+                                    // Complete maintenance procedure
                                     navController.navigateUp()
                                 }
                             },
@@ -272,13 +265,11 @@ fun ARView(
                                 containerColor = DarkGreen
                             )
                         ) {
-                            Text(
-                                if (instructionStep < instructions.size - 1) "Siguiente" else "Finalizar"
-                            )
+                            Text(text = if (instructionStep < instructions.size - 1) "Siguiente" else "Finalizar")
                         }
                     }
                 } else {
-                    // Initial help message
+                    // Prompt message when no model is yet placed
                     Text(
                         text = "Mueva la cámara para detectar superficies planas",
                         color = Color.White,
@@ -292,37 +283,27 @@ fun ARView(
     }
 }
 
-// Improved function to handle preprocessing of frames with OpenCV
+// Function to prepare frames for future OpenCV processing
 fun handlePreprocessing(inputFrame: Mat): Mat {
-    // This function prepares frames for future processing with OpenCV
+    // Clone the input frame to prepare for future processing steps
     val processedFrame = inputFrame.clone()
 
-    // Log the frame dimensions for debugging
+    // Log frame dimensions for debugging purposes
     Log.d(TAG, "Processing frame: ${inputFrame.width()} x ${inputFrame.height()}")
 
-    // Currently no transformation is applied as per requirements
-    // Just set up for future processing capabilities
-
-    // Examples of transformations we could apply in the future:
-    // 1. Convert to grayscale:
+    // No transformation applied at this stage per requirements
+    // Future processing steps might include grayscale conversion, blurring, edge detection, etc.
+    // Examples (currently commented out):
     // Imgproc.cvtColor(inputFrame, processedFrame, Imgproc.COLOR_RGB2GRAY)
-
-    // 2. Apply Gaussian blur to reduce noise:
     // Imgproc.GaussianBlur(processedFrame, processedFrame, Size(5.0, 5.0), 0.0)
-
-    // 3. Edge detection:
     // Imgproc.Canny(processedFrame, processedFrame, 50.0, 150.0)
-
-    // 4. Image segmentation, contour detection, etc. could also be added
 
     return processedFrame
 }
 
-// Helper function to convert an OpenCV Mat to Bitmap for display
+// Helper function to convert an OpenCV Mat to a Bitmap for display if needed
 fun matToBitmap(mat: Mat): Bitmap {
     val bitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
     Utils.matToBitmap(mat, bitmap)
     return bitmap
 }
-
-
