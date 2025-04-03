@@ -36,9 +36,15 @@ import org.opencv.android.Utils
 import org.opencv.imgproc.Imgproc
 import org.opencv.core.Size
 import kotlinx.coroutines.launch
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import android.view.MotionEvent
+import androidx.compose.ui.ExperimentalComposeUiApi
 
 private const val TAG = "ARView"
 
+@OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class, androidx.camera.core.ExperimentalGetImage::class)
 @Composable
 fun ARView(
     machine_selected: String,
@@ -81,7 +87,23 @@ fun ARView(
     Box(modifier = Modifier.fillMaxSize()) {
         // AR SceneView
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInteropFilter { event ->
+                    when (event.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            // Raycast to check if the model is tapped
+                            arSceneViewRef.value?.let { arSceneView ->
+                                val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
+                                hitResults?.forEach { hit ->
+
+                                }
+                            }
+                            false
+                        }
+                        else -> false
+                    }
+                },
             factory = { ctx ->
                 ARSceneView(ctx).apply {
                     arSceneViewRef.value = this
@@ -94,6 +116,28 @@ fun ARView(
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
                     }
 
+
+
+                    // Handle tracking failures
+                    onTrackingFailureChanged = { reason ->
+                        trackingFailureReason = reason
+                    }
+
+                    // Load the model
+                    scope.launch {
+                        try {
+                            val modelNode = ModelNode(
+                                modelInstance = modelLoader.createModelInstance(
+                                    assetFileLocation = "pump/pump.glb"
+                                )
+                            ).apply {
+                                isShadowReceiver = false
+                            }
+                            modelNodeRef.value = modelNode
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to load model: ${e.message ?: "Unknown error"}")
+                        }
+                    }
                 }
             }
         )
