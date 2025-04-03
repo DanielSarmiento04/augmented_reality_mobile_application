@@ -93,10 +93,6 @@ fun ARView(
                         config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
                     }
-                    
-
-
-                    
 
                 }
             }
