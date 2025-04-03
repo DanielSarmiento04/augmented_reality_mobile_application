@@ -50,6 +50,7 @@ android {
     sourceSets {
         getByName("main") {
             jniLibs.srcDirs("src/main/jniLibs")
+            assets.srcDirs("src/main/assets") // Ensure assets directory is included
         }
     }
 }
