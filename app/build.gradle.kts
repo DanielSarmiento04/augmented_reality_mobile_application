@@ -16,6 +16,14 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Add ndk configuration
+        ndk {
+            abiFilters.add("armeabi-v7a")
+            abiFilters.add("arm64-v8a")
+            abiFilters.add("x86")
+            abiFilters.add("x86_64")
+        }
     }
 
     buildTypes {
@@ -37,6 +45,13 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Add JNI configuration
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
 }
 
 dependencies {
@@ -52,7 +67,10 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.4.0")
     implementation("io.coil-kt:coil-gif:2.4.0")
 
-    implementation("org.opencv:opencv:4.11.0")
+    // OpenCV - use implementation by source, not transitive dependencies
+    implementation("org.opencv:opencv:4.11.0") {
+        exclude(group = "org.opencv", module = "opencv-android")
+    }
     
     // Augmented Reality
     implementation(libs.arsceneview)

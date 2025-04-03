@@ -2,6 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Camera permission for AR and OpenCV -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Storage permissions might be needed for saving processed images -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" 
+                     android:maxSdkVersion="28" />
+    
+    <!-- OpenCV and AR require camera features -->
+    <uses-feature android:name="android.hardware.camera" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    
+    <!-- AR Core requirements -->
+    <uses-feature android:name="android.hardware.camera.ar" android:required="true"/>
+    
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -13,6 +27,13 @@
         android:theme="@style/Theme.Augmented_mobile_application"
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="31">
+        
+        <!-- AR Core meta-data with conflict resolution -->
+        <meta-data
+            android:name="com.google.ar.core"
+            android:value="required"
+            tools:replace="android:value" />
+            
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -20,10 +41,8 @@
             android:theme="@style/Theme.Augmented_mobile_application">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
     </application>
-
 </manifest>
