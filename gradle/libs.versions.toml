@@ -20,7 +20,7 @@ activity-ktx = "1.9.1"
 retrofit = "2.9.0"
 okhttp = "4.9.1"
 coroutines = "1.7.2"
-arsceneview = "2.1.1"
+arsceneview = "2.2.1"  # Updated from 2.1.1 to 2.2.1
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
