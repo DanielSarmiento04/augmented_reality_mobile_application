@@ -62,6 +62,7 @@ androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "
 # Added libraries
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "core-splashscreen" }
 arsceneview = { group = "io.github.sceneview", name = "arsceneview", version.ref = "arsceneview" }
+sceneview = { group = "io.github.sceneview", name = "sceneview", version.ref = "arsceneview" }
 
 # Http
 retrofit = { group = "com.squareup.retrofit2", name = "retrofit", version.ref = "retrofit" }
