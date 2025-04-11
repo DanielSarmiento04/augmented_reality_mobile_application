@@ -17,7 +17,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.augmented_mobile_application.ui.theme.DarkGreen
 import androidx.navigation.NavHostController
 import android.graphics.Bitmap
-
+import android.os.Handler
+import android.os.HandlerThread
 // Correct SceneView 2.2.1 imports
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
@@ -35,12 +36,16 @@ import org.opencv.core.Mat
 import org.opencv.android.Utils
 import org.opencv.imgproc.Imgproc
 import org.opencv.core.Size
+import org.opencv.core.Core
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInteropFilter
 import android.view.MotionEvent
 import androidx.compose.ui.ExperimentalComposeUiApi
+import java.text.DecimalFormat
 
 private const val TAG = "ARView"
 
@@ -59,6 +64,22 @@ fun ARView(
     var frameProcessingEnabled by remember { mutableStateOf(false) }
     var isLoadingModel by remember { mutableStateOf(true) }
     var instructionStep by remember { mutableStateOf(0) }
+    
+    // Maintenance process state
+    var maintenanceStarted by remember { mutableStateOf(false) }
+    
+    // FPS tracking
+    var fps by remember { mutableStateOf(0.0) }
+    val fpsFormat = remember { DecimalFormat("0.0") }
+
+    // Processing thread for OpenCV
+    val processingThread = remember { HandlerThread("OpenCVProcessing").apply { start() } }
+    val processingHandler = remember { Handler(processingThread.looper) }
+    
+    // Frequency control for FPS calculation
+    val fpsUpdateIntervalMs = 500L
+    var lastFpsUpdateTime = remember { 0L }
+    var frameCount = remember { 0 }
 
     // Instructions for maintenance steps
     val instructions = listOf(
@@ -75,13 +96,20 @@ fun ARView(
     val modelNodeRef = remember { mutableStateOf<ModelNode?>(null) }
     val anchorNodeRef = remember { mutableStateOf<AnchorNode?>(null) }
 
-    // OpenCV setup
+    // OpenCV setup - ensure it's loaded before any frame processing
     LaunchedEffect(Unit) {
         try {
             System.loadLibrary("opencv_java4")
             Log.d(TAG, "OpenCV library loaded successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load OpenCV library: ${e.localizedMessage ?: "Unknown error"}")
+        }
+    }
+    
+    // Cleanup resources when component is destroyed
+    DisposableEffect(Unit) {
+        onDispose {
+            processingThread.quitSafely()
         }
     }
 
@@ -93,11 +121,27 @@ fun ARView(
                 .pointerInteropFilter { event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            // Placeholder for raycast handling
+                            // Handle model placement on tap if not already placed
                             arSceneViewRef.value?.let { arSceneView ->
                                 val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
-                                hitResults?.forEach { hit ->
-                                    // Process hit result if needed
+                                if (!modelPlaced && !hitResults.isNullOrEmpty()) {
+                                    hitResults.firstOrNull()?.let { hit ->
+                                        // Place model at hit point
+                                        val anchor = hit.createAnchor()
+                                        val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
+                                        // Use entity-based addition
+                                        arSceneView.scene.addEntity(anchorNode.entity)
+                                        
+                                        modelNodeRef.value?.let { modelNode ->
+                                            // Add model to scene directly
+                                            arSceneView.scene.addEntity(modelNode.entity)
+                                            // Position model relative to anchor
+                                            modelNode.transform.position = anchorNode.transform.position
+
+                                            modelPlaced = true
+                                            anchorNodeRef.value = anchorNode
+                                        }
+                                    }
                                 }
                             }
                             false
@@ -124,6 +168,53 @@ fun ARView(
                         trackingFailureReason = reason
                     }
 
+                    // Set up frame listener for OpenCV processing
+                    onFrame = { arFrame ->
+                        if (frameProcessingEnabled && maintenanceStarted) {
+                            frameCount++
+                            val currentTime = System.currentTimeMillis()
+                            
+                            // Update FPS calculation at specified intervals
+                            if (currentTime - lastFpsUpdateTime > fpsUpdateIntervalMs) {
+                                val timeSpan = (currentTime - lastFpsUpdateTime) / 1000.0
+                                if (timeSpan > 0) {
+                                    fps = frameCount / timeSpan
+                                    frameCount = 0
+                                    lastFpsUpdateTime = currentTime
+                                }
+                            }
+                            
+                            // Process frame in background thread - capture the ARSceneView reference safely
+                            val sceneView = arSceneViewRef.value
+                            if (sceneView != null) {
+                                try {
+                                    // Use frame directly instead of trying to access camera texture
+                                    processingHandler.post {
+                                        try {
+                                            // Create bitmap from current view
+                                            val bitmap = createBitmapFromTexture(sceneView)
+                                            // Convert bitmap to OpenCV Mat
+                                            val mat = Mat()
+                                            Utils.bitmapToMat(bitmap, mat)
+                                            
+                                            // Process frame with OpenCV
+                                            val processedMat = handlePreprocessing(mat)
+                                            
+                                            // Clean up
+                                            mat.release()
+                                            processedMat.release()
+                                            bitmap.recycle()
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Error processing frame: ${e.message}")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to process frame: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+
                     // Load the pump model from assets/pump/pump.glb
                     scope.launch {
                         try {
@@ -137,8 +228,6 @@ fun ARView(
                             }
                             modelNodeRef.value = modelNode
                             isLoadingModel = false
-                            // Optionally, place the model as soon as it is loaded
-                            modelPlaced = true
                         } catch (e: Exception) {
                             Log.e(TAG, "Failed to load model: ${e.message ?: "Unknown error"}")
                             isLoadingModel = false
@@ -177,6 +266,18 @@ fun ARView(
                         fontSize = 16.sp,
                         color = Color.Black
                     )
+                    
+                    // Show FPS when maintenance has started
+                    if (maintenanceStarted && frameProcessingEnabled) {
+                        Text(
+                            text = "FPS: ${fpsFormat.format(fps)}",
+                            fontSize = 14.sp,
+                            color = DarkGreen,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                    
                     if (isLoadingModel) {
                         LinearProgressIndicator(
                             modifier = Modifier
@@ -216,23 +317,29 @@ fun ARView(
                         onClick = {
                             // Enable frame processing and update the instruction step
                             frameProcessingEnabled = true
+                            maintenanceStarted = true
                             instructionStep = 1
+                            // Reset FPS tracking
+                            lastFpsUpdateTime = System.currentTimeMillis()
+                            frameCount = 0
                         },
+                        enabled = modelPlaced && !maintenanceStarted,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = DarkGreen
+                            containerColor = DarkGreen,
+                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
                         ),
                         modifier = Modifier
                             .fillMaxWidth(0.8f)
                             .padding(vertical = 8.dp)
                     ) {
                         Text(
-                            text = "Inicial Mantenimiento",
+                            text = "Iniciar Mantenimiento",
                             color = Color.White,
                             fontSize = 16.sp
                         )
                     }
 
-                    // Navigation buttons for maintenance steps
+                    // Navigation buttons for maintenance steps - only enabled after maintenance starts
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -243,7 +350,7 @@ fun ARView(
                                     instructionStep--
                                 }
                             },
-                            enabled = instructionStep > 1,
+                            enabled = maintenanceStarted && instructionStep > 1,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = DarkGreen,
                                 disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
@@ -258,11 +365,14 @@ fun ARView(
                                     instructionStep++
                                 } else {
                                     // Complete maintenance procedure
+                                    frameProcessingEnabled = false
                                     navController.navigateUp()
                                 }
                             },
+                            enabled = maintenanceStarted,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = DarkGreen
+                                containerColor = DarkGreen,
+                                disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
                             )
                         ) {
                             Text(text = if (instructionStep < instructions.size - 1) "Siguiente" else "Finalizar")
@@ -271,7 +381,7 @@ fun ARView(
                 } else {
                     // Prompt message when no model is yet placed
                     Text(
-                        text = "Mueva la cámara para detectar superficies planas",
+                        text = "Mueva la cámara para detectar superficies planas y toque para colocar el modelo",
                         color = Color.White,
                         modifier = Modifier
                             .background(Color.Black.copy(alpha = 0.7f))
@@ -283,21 +393,37 @@ fun ARView(
     }
 }
 
+// Helper function to create a bitmap from AR scene
+fun createBitmapFromTexture(arSceneView: ARSceneView): Bitmap {
+    val width = arSceneView.width
+    val height = arSceneView.height
+    
+    // Create a bitmap of the current view
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    
+    // Draw the view to a canvas which renders to the bitmap
+    val canvas = android.graphics.Canvas(bitmap)
+    arSceneView.draw(canvas)
+    
+    return bitmap
+}
+
 // Function to prepare frames for future OpenCV processing
 fun handlePreprocessing(inputFrame: Mat): Mat {
-    // Clone the input frame to prepare for future processing steps
     val processedFrame = inputFrame.clone()
-
+    
+    // First step: Convert to grayscale for better processing
+    Imgproc.cvtColor(processedFrame, processedFrame, Imgproc.COLOR_RGBA2GRAY)
+    
+    // Apply Gaussian blur to reduce noise
+    Imgproc.GaussianBlur(processedFrame, processedFrame, Size(5.0, 5.0), 0.0)
+    
+    // Apply Canny edge detection to highlight edges
+    Imgproc.Canny(processedFrame, processedFrame, 50.0, 150.0)
+    
     // Log frame dimensions for debugging purposes
     Log.d(TAG, "Processing frame: ${inputFrame.width()} x ${inputFrame.height()}")
-
-    // No transformation applied at this stage per requirements
-    // Future processing steps might include grayscale conversion, blurring, edge detection, etc.
-    // Examples (currently commented out):
-    // Imgproc.cvtColor(inputFrame, processedFrame, Imgproc.COLOR_RGB2GRAY)
-    // Imgproc.GaussianBlur(processedFrame, processedFrame, Size(5.0, 5.0), 0.0)
-    // Imgproc.Canny(processedFrame, processedFrame, 50.0, 150.0)
-
+    
     return processedFrame
 }
 
