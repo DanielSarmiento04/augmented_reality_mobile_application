@@ -18,6 +18,7 @@ import com.example.augmented_mobile_application.ui.LoginView
 import com.example.augmented_mobile_application.ui.UserContentView
 import com.example.augmented_mobile_application.ui.ManualView
 import com.example.augmented_mobile_application.ui.ARView
+import com.example.augmented_mobile_application.ui.PumpManualsView
 import com.example.augmented_mobile_application.viewmodel.UserViewModel
 import com.example.augmented_mobile_application.viewmodel.ManualViewModel
 import com.example.augmented_mobile_application.ui.theme.Augmented_mobile_applicationTheme
@@ -28,6 +29,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import com.example.augmented_mobile_application.opencv.OpenCVInitializer
 import android.util.Log
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 class MainActivity : ComponentActivity() {
     private val userViewModel: UserViewModel by viewModels()
@@ -118,10 +121,17 @@ fun MainAppContent(userViewModel: UserViewModel, manualViewModel: ManualViewMode
                     }
                 )
             }
+
+            // New route for Pump Manuals selection
+            composable(route = "pumpManuals") {
+                PumpManualsView(navController = navController)
+            }
             
-            // Manual view route
+            // Manual view route - Decode the pdfName argument
             composable(route = "manualView/{pdfName}") { backStackEntry ->
-                val pdfName = backStackEntry.arguments?.getString("pdfName") ?: "pump"
+                val encodedPdfName = backStackEntry.arguments?.getString("pdfName") ?: "pump"
+                // Decode the pdfName argument
+                val pdfName = URLDecoder.decode(encodedPdfName, StandardCharsets.UTF_8.toString())
                 ManualView(
                     navController = navController,
                     manualViewModel = manualViewModel,

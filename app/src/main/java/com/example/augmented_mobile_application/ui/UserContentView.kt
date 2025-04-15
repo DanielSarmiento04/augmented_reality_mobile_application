@@ -12,6 +12,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,6 +78,8 @@ fun UserContentView(
             .build()
     }
 
+    val haptic = LocalHapticFeedback.current // Get haptic feedback instance
+
     Scaffold(
         topBar = {
             user?.let {
@@ -96,7 +100,7 @@ fun UserContentView(
         }
     ) { innerPadding ->
         Box(
-            modifier = Modifier
+             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = innerPadding.calculateTopPadding(), start = 16.dp, end = 16.dp, bottom = 16.dp)
                 .background(OffWhite),
@@ -155,24 +159,24 @@ fun UserContentView(
 
                 Spacer(modifier = Modifier.height(32.dp))
 
-                // Fixed navigation with correct PDF path parameter
+                // Button to navigate to the Pump Manuals selection view
                 Button(
                     onClick = {
-                        // Navigate to the manual view with the correct parameter
-                        // The ManualViewModel will handle adding the subfolder path
-                        navController.navigate("manualView/$PDF_NAME")
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
+                        // Navigate to the pump manuals selection screen
+                        navController.navigate("pumpManuals")
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                 ) {
-                    Text(text = "Ver Manual de la Bomba")
+                    Text(text = "Ver Manuales de la Bomba") // Updated text for clarity
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-
                 Button(
                     onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
                         navController.navigate("arView/$MACHINE_TYPE")
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -185,7 +189,10 @@ fun UserContentView(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Button(
-                    onClick = onLogout,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
+                        onLogout()
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error
@@ -206,6 +213,7 @@ fun CenterAlignedTopAppBarExample(
 ) {
     var isDialogOpen by remember { mutableStateOf(false) }
     var isMenuOpen by remember { mutableStateOf(false) }
+    val haptic = LocalHapticFeedback.current // Get haptic feedback instance
 
     TopAppBar(
         colors = TopAppBarDefaults.topAppBarColors(
@@ -225,7 +233,10 @@ fun CenterAlignedTopAppBarExample(
         },
         navigationIcon = {
             Box {
-                IconButton(onClick = { isMenuOpen = true }) {
+                IconButton(onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
+                    isMenuOpen = true
+                }) {
                     Icon(
                         imageVector = Icons.Filled.Menu,
                         contentDescription = "Menú",
@@ -258,6 +269,7 @@ fun CenterAlignedTopAppBarExample(
                     DropdownMenuItem(
                         text = { Text("Cerrar sesión", color = Color.Red) },
                         onClick = { 
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
                             isMenuOpen = false
                             onLogout()
                         }
@@ -266,7 +278,10 @@ fun CenterAlignedTopAppBarExample(
             }
         },
         actions = {
-            IconButton(onClick = { isDialogOpen = true }) {
+            IconButton(onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress) // Add haptic feedback
+                isDialogOpen = true
+            }) {
                 Box(
                     modifier = Modifier
                         .size(32.dp)
