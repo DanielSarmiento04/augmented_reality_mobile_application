@@ -1,4 +1,4 @@
-package com.example.augmented_mobile_application // Correct package declaration if needed
+package com.example.augmented_mobile_application.ai // Correct package declaration if needed
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -27,7 +27,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.round
 import kotlin.math.ceil
-
+import com.example.augmented_mobile_application.BuildConfig // Ensure BuildConfig is imported
 
 /**
  * YOLOv11Detector for Android using TFLite and OpenCV
@@ -74,7 +74,7 @@ class YOLO11Detector(
     // Data structures for model and inference
     private var interpreter: Interpreter
     private val classNames: List<String>
-    private val classColors: List<IntArray>
+    internal val classColors: List<IntArray> // Changed visibility to internal
     private var gpuDelegate: GpuDelegate? = null
     private var nnApiDelegate: NnApiDelegate? = null // Add NNAPI delegate instance
 
@@ -1172,7 +1172,7 @@ class YOLO11Detector(
         return outputs
     }
 
-    /**
+     /**
      * Post-processes the model outputs to extract detections
      * Modified to correctly handle normalized coordinates
      */
@@ -1272,21 +1272,20 @@ class YOLO11Detector(
                             round(scaledBox.bottom)
                         )
 
-                        // Create detection object with proper dimensions
-                        val detection = Detection(
-                            BoundingBox(
-                                roundedBox.left.toInt(),
-                                roundedBox.top.toInt(),
-                                roundedBox.width().toInt(),
-                                roundedBox.height().toInt()
-                            ),
-                            confidences[idx],
-                            classIds[idx]
-                        )
+                        // Add to lists for NMS
+                        boxes.add(roundedBox) // Add the rounded box
+                        confidences.add(maxScore)
+                        classIds.add(classId)
 
-                        detections.add(detection)
-                        debug("Added detection: box=${detection.box.x},${detection.box.y},${detection.box.width},${detection.box.height}, " +
-                                "conf=${detection.conf}, class=${classIds[idx]}")
+                        // Create box for NMS with class offset
+                        val nmsBox = RectF(
+                            roundedBox.left + classId * 7680f, // Use roundedBox coords
+                            roundedBox.top + classId * 7680f,
+                            roundedBox.right + classId * 7680f,
+                            roundedBox.bottom + classId * 7680f
+                        )
+                        nmsBoxes.add(nmsBox)
+
                     } else {
                         debug("Skipped detection with invalid dimensions: ${boxWidth}x${boxHeight}")
                     }
@@ -1297,14 +1296,17 @@ class YOLO11Detector(
 
             // Run NMS to eliminate redundant boxes
             val selectedIndices = mutableListOf<Int>()
-            // Use the lists populated above (boxes, confidences, classIds)
-            fastNonMaxSuppression(boxes, confidences, confThreshold, iouThreshold, selectedIndices) // Use the fast NMS version here as well
+            // nonMaxSuppression(nmsBoxes, confidences, confThreshold, iouThreshold, selectedIndices)
+            fastNonMaxSuppression(nmsBoxes, confidences, confThreshold, iouThreshold, selectedIndices) // Use the fast NMS version here as well
 
             debug("After NMS: ${selectedIndices.size} detections remaining")
 
             // Create final detection objects
-            for (idx in selectedIndices) {
-                val box = boxes[idx] // Use the correct box list
+            // Iterate through the indices of the selectedIndices list
+            for (idx in selectedIndices.indices) {
+                // Get the original index from the pre-NMS lists
+                val originalIndex = selectedIndices[idx]
+                val box = boxes[originalIndex] // Use original index to get the correct box
 
                 // Calculate width and height from corners
                 val width = box.right - box.left
@@ -1318,13 +1320,13 @@ class YOLO11Detector(
                         width.toInt(),
                         height.toInt()
                     ),
-                    confidences[idx], // Use the correct confidences list
-                    classIds[idx]     // Use the correct classIds list
+                    confidences[originalIndex], // Use original index
+                    classIds[originalIndex]     // Use original index
                 )
 
                 detections.add(detection)
                 debug("Added detection: box=${detection.box.x},${detection.box.y},${detection.box.width},${detection.box.height}, " +
-                        "conf=${detection.conf}, class=${classIds[idx]}") // Use classIds[idx]
+                        "conf=${detection.conf}, class=${classIds[originalIndex]}") // Use original index
             }
         } catch (e: Exception) {
             debug("Error during postprocessing: ${e.message}")
@@ -1333,77 +1335,6 @@ class YOLO11Detector(
 
         scopedTimer.stop()
         return detections
-    }
-
-    /**
-     * Draws bounding boxes on the provided bitmap
-     */
-    fun drawDetections(bitmap: Bitmap, detections: List<Detection>): Bitmap {
-        val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val canvas = Canvas(mutableBitmap)
-        val paint = Paint()
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = max(bitmap.width, bitmap.height) * 0.004f
-
-        val textPaint = Paint()
-        textPaint.style = Paint.Style.FILL
-        textPaint.textSize = max(bitmap.width, bitmap.height) * 0.02f
-
-        // Filter detections to ensure quality results
-        val filteredDetections = detections.filter {
-            it.conf > CONFIDENCE_THRESHOLD &&
-                    it.classId >= 0 &&
-                    it.classId < classNames.size
-        }
-
-        for (detection in filteredDetections) {
-            // Get color for this class
-            val color = classColors[detection.classId % classColors.size]
-            paint.color = Color.rgb(color[0], color[1], color[2])
-
-            // Draw bounding box
-            canvas.drawRect(
-                detection.box.x.toFloat(),
-                detection.box.y.toFloat(),
-                (detection.box.x + detection.box.width).toFloat(),
-                (detection.box.y + detection.box.height).toFloat(),
-                paint
-            )
-
-            // Create label text
-            val label = "${classNames[detection.classId]}: ${(detection.conf * 100).toInt()}%"
-
-            // Measure text for background rectangle
-            val textWidth = textPaint.measureText(label)
-            val textHeight = textPaint.textSize
-
-            // Define label position
-            val labelY = max(detection.box.y.toFloat(), textHeight + 5f)
-
-            // Draw background rectangle for text
-            val bgPaint = Paint()
-            bgPaint.color = Color.rgb(color[0], color[1], color[2])
-            bgPaint.style = Paint.Style.FILL
-
-            canvas.drawRect(
-                detection.box.x.toFloat(),
-                labelY - textHeight - 5f,
-                detection.box.x.toFloat() + textWidth + 10f,
-                labelY + 5f,
-                bgPaint
-            )
-
-            // Draw text
-            textPaint.color = Color.WHITE
-            canvas.drawText(
-                label,
-                detection.box.x.toFloat() + 5f,
-                labelY - 5f,
-                textPaint
-            )
-        }
-
-        return mutableBitmap
     }
 
     /**
@@ -1683,10 +1614,6 @@ class YOLO11Detector(
             for (j in i + 1 until sortedIndices.size) {
                 val compareIdx = sortedIndices[j]
 
-                if (suppressed[compareIdx]) {
-                    continue
-                }
-
                 // Calculate intersection
                 val compareBox = boxes[compareIdx]
                 val x1 = max(x1Max, compareBox.left)
@@ -1721,13 +1648,10 @@ class YOLO11Detector(
         // but direct BuildConfig usage is fine within the app module.
         // Consider adding a check if context is available if this class
         // could be instantiated very early.
-        Log.d(TAG, message)
-        // Example using context if needed:
-        // val isDebug = 0 != (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE)
-        // if (isDebug) { ... }
-        // Using direct BuildConfig is generally preferred within the app module.
-        if (com.example.augmented_mobile_application.BuildConfig.DEBUG) {
-            println("$TAG: $message") // Prefix with TAG for clarity in console output
+        if (BuildConfig.DEBUG) { // Check BuildConfig.DEBUG directly
+            Log.d(TAG, message)
+            // Optionally print to console as well during debug builds
+            // println("$TAG: $message") // Prefix with TAG for clarity in console output
         }
     }
 
