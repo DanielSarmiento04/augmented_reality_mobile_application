@@ -53,6 +53,8 @@ android {
             assets.srcDirs("src/main/assets") // Ensure assets directory is included
         }
     }
+    ndkVersion = "27.0.12077973"
+    buildToolsVersion = "34.0.0"
 }
 
 dependencies {
@@ -65,14 +67,22 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.compose.material.icons.extended)
 
-    implementation("io.coil-kt:coil-compose:2.4.0")
-    implementation("io.coil-kt:coil-gif:2.4.0")
+    // Coil
+    implementation(libs.bundles.coil)
 
     // OpenCV - use implementation by source, not transitive dependencies
-    implementation("org.opencv:opencv:4.11.0") {
+    implementation(libs.opencv) {
         exclude(group = "org.opencv", module = "opencv-android")
     }
-    
+
+    // TensorFlow Lite (Updated to 2.16.1)
+    // implementation(libs.bundles.tensorflow.lite) // Remove bundle
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1") // For Interpreter.Options().addDelegateFactory()
+    // Or use the delegate plugin for simpler GPU delegate integration:
+    // implementation("org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4")
+    // implementation("org.tensorflow:tensorflow-lite-support:0.4.4") // Optional: For support library features
+
     // Augmented Reality
     implementation(libs.arsceneview)
 
@@ -81,6 +91,7 @@ dependencies {
 
     // Coroutines
     implementation(libs.bundles.coroutines)
+    implementation(libs.litert.api)
 
     // Testing
     testImplementation(libs.junit)

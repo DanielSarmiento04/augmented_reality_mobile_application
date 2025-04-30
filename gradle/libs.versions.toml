@@ -20,7 +20,12 @@ activity-ktx = "1.9.1"
 retrofit = "2.9.0"
 okhttp = "4.9.1"
 coroutines = "1.7.2"
-arsceneview = "2.2.1"  # Updated from 2.1.1 to 2.2.1
+arsceneview = "2.2.1"
+litertApi = "1.2.0"  # Updated from 2.1.1 to 2.2.1
+coil = "2.4.0" # Added Coil version
+opencv = "4.11.0" # Added OpenCV version
+tensorflowLite = "2.16.1" # Added TensorFlow Lite core version
+tensorflowLiteSupport = "0.4.4" # Added TensorFlow Lite support/task/metadata version
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -72,6 +77,23 @@ okhttp-logging-interceptor = { group = "com.squareup.okhttp3", name = "logging-i
 # Coroutines
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+litert-api = { group = "com.google.ai.edge.litert", name = "litert-api", version.ref = "litertApi" }
+
+# Coil
+coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+coil-gif = { group = "io.coil-kt", name = "coil-gif", version.ref = "coil" }
+
+# OpenCV
+opencv = { group = "org.opencv", name = "opencv", version.ref = "opencv" }
+
+# TensorFlow Lite
+tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
+tensorflow-lite-gpu = { group = "org.tensorflow", name = "tensorflow-lite-gpu", version.ref = "tensorflowLite" }
+tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
+tensorflow-lite-task-vision = { group = "org.tensorflow", name = "tensorflow-lite-task-vision", version.ref = "tensorflowLiteSupport" }
+tensorflow-lite-metadata = { group = "org.tensorflow", name = "tensorflow-lite-metadata", version.ref = "tensorflowLiteSupport" }
+tensorflow-lite-select-tf-ops = { group = "org.tensorflow", name = "tensorflow-lite-select-tf-ops", version.ref = "tensorflowLite" }
+
 
 [bundles]
 androidx-lifecycle = [
@@ -101,9 +123,21 @@ coroutines = [
     "kotlinx-coroutines-core",
     "kotlinx-coroutines-android"
 ]
+coil = [ # Added Coil bundle
+    "coil-compose",
+    "coil-gif"
+]
+tensorflow-lite = [ # Added TensorFlow Lite bundle
+    "tensorflow-lite",
+    "tensorflow-lite-gpu",
+    "tensorflow-lite-support",
+    "tensorflow-lite-task-vision",
+    "tensorflow-lite-metadata",
+    "tensorflow-lite-select-tf-ops"
+]
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-
