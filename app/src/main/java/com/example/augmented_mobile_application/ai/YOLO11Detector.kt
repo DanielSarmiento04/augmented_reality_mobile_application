@@ -443,6 +443,409 @@ class YOLO11Detector(
     }
 
     /**
+     * GPU-accelerated image preprocessing with buffer reuse
+     * Reverted to CPU-only path using Mat to resolve type errors.
+     */
+    private fun preprocessImageOptimized(image: Mat, outImage: Mat, newShape: Size): ByteBuffer {
+        try {
+            letterBoxOptimized(image, outImage, newShape, Scalar(114.0, 114.0, 114.0)) // Use Mat directly
+            Imgproc.cvtColor(outImage, outImage, Imgproc.COLOR_BGR2RGB)
+
+            // Prepare input buffer - reuse existing if possible
+            if (inputBuffer == null) {
+                val bytesPerChannel = if (isQuantized) 1 else 4
+                inputBuffer = ByteBuffer.allocateDirect(1 * inputWidth * inputHeight * 3 * bytesPerChannel)
+                    .apply { order(ByteOrder.nativeOrder()) }
+            } else {
+                inputBuffer?.clear()
+            }
+
+            // Fill input buffer efficiently with specialized paths for quantized vs float models
+            if (isQuantized) {
+                // Direct byte copy for quantized models - much faster
+                val pixels = ByteArray(outImage.width() * outImage.height() * outImage.channels())
+                outImage.get(0, 0, pixels)
+                inputBuffer?.put(pixels)
+            } else {
+                // For float models - normalize while copying to avoid extra matrix allocation
+                val floatBuffer = inputBuffer?.asFloatBuffer()
+                val pixelValues = FloatArray(outImage.channels()) // Reusable buffer for pixel values
+                val rows = outImage.rows()
+                val cols = outImage.cols()
+                val channels = outImage.channels()
+
+                // Direct normalization loop avoids extra matrix allocation
+                for (y in 0 until rows) {
+                    for (x in 0 until cols) {
+                        outImage.get(y, x, pixelValues) // Read pixel into buffer
+                        for (c in 0 until channels) {
+                            floatBuffer?.put(pixelValues[c] / 255.0f) // Normalize and put
+                        }
+                    }
+                }
+            }
+
+            inputBuffer?.rewind()
+            return inputBuffer!!
+
+        } catch (e: Exception) {
+            debug("Error in optimized preprocessing: ${e.message}")
+            throw RuntimeException("Preprocessing failed", e)
+        }
+    }
+
+    /**
+     * Optimized letterboxing with minimal padding and memory allocations
+     * Modified to work directly with Mat.
+     */
+    private fun letterBoxOptimized(src: Mat, dst: Mat, targetSize: Size, color: Scalar) {
+        try {
+            // Calculate scaling ratios
+            val wRatio = targetSize.width / src.width()
+            val hRatio = targetSize.height / src.height()
+            val ratio = Math.min(wRatio, hRatio)
+
+            // Calculate new dimensions
+            val newUnpadWidth = (src.width() * ratio).toInt()
+            val newUnpadHeight = (src.height() * ratio).toInt()
+
+            // Calculate padding
+            val dw = (targetSize.width - newUnpadWidth).toInt()
+            val dh = (targetSize.height - newUnpadHeight).toInt()
+
+            // Calculate padding on each side
+            val top = dh / 2
+            val bottom = dh - top
+            val left = dw / 2
+            val right = dw - left
+
+            // Optimize resize interpolation method based on scaling
+            val interpolation = if (ratio > 1) Imgproc.INTER_LINEAR else Imgproc.INTER_AREA
+
+            // Resize the image efficiently
+            val resized: Mat
+            val needsRelease: Boolean
+            if (src.nativeObjAddr == dst.nativeObjAddr) {
+                resized = Mat() // Create a temporary Mat
+                needsRelease = true
+            } else {
+                resized = dst // Resize directly into dst if it's different
+                needsRelease = false
+            }
+
+            Imgproc.resize(src, resized, Size(newUnpadWidth.toDouble(), newUnpadHeight.toDouble()), 0.0, 0.0, interpolation)
+
+            // Apply padding only if needed
+            if (dw > 0 || dh > 0) {
+                Core.copyMakeBorder(resized, dst, top, bottom, left, right, Core.BORDER_CONSTANT, color)
+            } else if (needsRelease) {
+                // If no padding was needed BUT we used a temporary Mat, copy it to dst
+                resized.copyTo(dst)
+            }
+
+            // Cleanup temp mat if created
+            if (needsRelease) {
+                resized.release()
+            }
+
+        } catch (e: Exception) {
+            debug("Error in letterbox optimization: ${e.message}")
+            throw RuntimeException("Letterboxing failed", e)
+        }
+    }
+
+    /**
+     * Optimized inference with pre-allocated buffers
+     */
+    private fun runOptimizedInference(inputTensor: ByteBuffer) {
+        try {
+            // Ensure output buffer is ready
+            outputBuffer?.rewind()
+
+            // Use direct interpreter run with pre-allocated buffers
+            interpreter.run(inputTensor, outputBuffer)
+
+        } catch (e: Exception) {
+            debug("Error during optimized inference: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Optimized post-processing with pre-allocated arrays for NMS
+     */
+    private fun postprocessOptimized(
+        outputMap: Map<Int, Any>,
+        originalImageSize: Size,
+        resizedImageShape: Size,
+        confThreshold: Float,
+        iouThreshold: Float
+    ): List<Detection> {
+        val scopedTimer = ScopedTimer("postprocessing_optimized")
+
+        // Pre-allocate collections to avoid growth reallocations
+        val detections = ArrayList<Detection>(100)
+        val boxes = ArrayList<RectF>(500)
+        val confidences = ArrayList<Float>(500)
+        val classIds = ArrayList<Int>(500)
+
+        try {
+            // Get output buffer
+            val outputBuffer = outputMap[0] as ByteBuffer
+            outputBuffer.rewind()
+
+            // Get output dimensions (same logic as before)
+            val outputShapes = interpreter.getOutputTensor(0).shape()
+            val num_predictions = outputShapes[2]
+
+            // Extract features to float array once for faster access
+            val outputFloats = FloatArray(outputShapes[1] * num_predictions)
+            val floatBuffer = outputBuffer.asFloatBuffer()
+            floatBuffer.get(outputFloats)
+
+            // Detection extraction loop with optimized inner loop
+            var detectionCount = 0
+            val classScoreOffset = 4 * num_predictions // Offset to class scores
+
+            for (i in 0 until num_predictions) {
+                // Fast max score search
+                var maxScore = 0f
+                var maxClass = -1
+
+                // Optimized class loop with direct array access
+                var classOffset = classScoreOffset + i
+                for (c in 0 until numClasses) {
+                    val score = outputFloats[classOffset]
+                    if (score > maxScore) {
+                        maxScore = score
+                        maxClass = c
+                    }
+                    classOffset += num_predictions // Move to next class
+                }
+
+                // Apply confidence threshold
+                if (maxScore >= confThreshold) {
+                    // Extract box coordinates efficiently
+                    val x = outputFloats[i]
+                    val y = outputFloats[num_predictions + i]
+                    val w = outputFloats[2 * num_predictions + i]
+                    val h = outputFloats[3 * num_predictions + i]
+
+                    // Convert center-form to corner-form (normalized)
+                    val left = x - w / 2
+                    val top = y - h / 2
+                    val right = x + w / 2
+                    val bottom = y + h / 2
+
+                    // Create initial box (reuse object if possible)
+                    val box = RectF(left, top, right, bottom)
+
+                    // Scale to original image size with minimal allocations
+                    val scaledBox = scaleCoords(
+                        resizedImageShape,
+                        box,
+                        originalImageSize,
+                        true // clip = true
+                    )
+
+                    // Add to candidates if valid size
+                    val boxWidth = scaledBox.right - scaledBox.left
+                    val boxHeight = scaledBox.bottom - scaledBox.top
+
+                    if (boxWidth > 1 && boxHeight > 1) {
+                        // Create box for NMS with class offset (avoids separate per-class NMS)
+                        val nmsBox = RectF(
+                            scaledBox.left + maxClass * 7680f,
+                            scaledBox.top + maxClass * 7680f,
+                            scaledBox.right + maxClass * 7680f,
+                            scaledBox.bottom + maxClass * 7680f
+                        )
+
+                        boxes.add(nmsBox)
+                        confidences.add(maxScore)
+                        classIds.add(maxClass)
+                        detectionCount++
+                    }
+                }
+            }
+
+            debug("Found $detectionCount raw detections before NMS")
+
+            // Apply Non-Maximum Suppression with preallocated arrays
+            val selectedIndices = ArrayList<Int>(100)
+            fastNonMaxSuppression(boxes, confidences, confThreshold, iouThreshold, selectedIndices)
+
+            debug("After NMS: ${selectedIndices.size} detections remaining")
+
+            // Create final Detection objects
+            for (idx in selectedIndices) {
+                val nmsBox = boxes[idx]
+                val classId = classIds[idx]
+
+                // Remove the class offset from the box coordinates
+                val originalBox = RectF(
+                    nmsBox.left - classId * 7680f,
+                    nmsBox.top - classId * 7680f,
+                    nmsBox.right - classId * 7680f,
+                    nmsBox.bottom - classId * 7680f
+                )
+
+                // Round coordinates to integers
+                val boxX = Math.round(originalBox.left)
+                val boxY = Math.round(originalBox.top)
+                val boxWidth = Math.round(originalBox.right - originalBox.left)
+                val boxHeight = Math.round(originalBox.bottom - originalBox.top)
+
+                detections.add(
+                    Detection(
+                        BoundingBox(boxX, boxY, boxWidth, boxHeight),
+                        confidences[idx],
+                        classId
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            debug("Error during optimized postprocessing: ${e.message}")
+            e.printStackTrace()
+        }
+
+        scopedTimer.stop()
+        return detections
+    }
+
+    /**
+     * Scale coordinates from model input size to original image size
+     * FIXED: Improved coordinate scaling to account for minimal padding
+     */
+    private fun scaleCoords(
+        imageShape: Size,
+        coords: RectF,
+        imageOriginalShape: Size,
+        clip: Boolean = true
+    ): RectF {
+        // Get dimensions in pixels
+        val inputWidth = imageShape.width.toFloat()
+        val inputHeight = imageShape.height.toFloat()
+        val originalWidth = imageOriginalShape.width.toFloat()
+        val originalHeight = imageOriginalShape.height.toFloat()
+
+        // Calculate scaling factor (gain) used during letterboxing
+        val gain = min(inputWidth / originalWidth, inputHeight / originalHeight)
+
+        // Calculate padding added during letterboxing
+        val padX = (inputWidth - originalWidth * gain) / 2.0f
+        val padY = (inputHeight - originalHeight * gain) / 2.0f
+
+        // Convert normalized coordinates [0-1] relative to inputShape to absolute pixel coordinates
+        val absLeft = coords.left * inputWidth
+        val absTop = coords.top * inputHeight
+        val absRight = coords.right * inputWidth
+        val absBottom = coords.bottom * inputHeight
+
+        // Remove padding and scale back to original image dimensions
+        val x1 = (absLeft - padX) / gain
+        val y1 = (absTop - padY) / gain
+        val x2 = (absRight - padX) / gain
+        val y2 = (absBottom - padY) / gain
+
+        // Create result rectangle in original image coordinates
+        val result = RectF(x1, y1, x2, y2)
+
+        // Clip to image boundaries if requested
+        if (clip) {
+            result.left = max(0f, result.left)
+            result.top = max(0f, result.top)
+            result.right = min(result.right, originalWidth)
+            result.bottom = min(result.bottom, originalHeight)
+        }
+
+        return result
+    }
+
+    /**
+     * Fast Non-Maximum Suppression implementation optimized for speed
+     * Uses vectorized operations and early termination for better performance
+     */
+    private fun fastNonMaxSuppression(
+        boxes: List<RectF>,
+        scores: List<Float>,
+        scoreThreshold: Float,
+        iouThreshold: Float,
+        indices: MutableList<Int>
+    ) {
+        indices.clear()
+
+        // Return early if no boxes
+        if (boxes.isEmpty()) {
+            return
+        }
+
+        // Filter indices by score threshold first, then sort by score descending
+        val filteredSortedIndices = scores.indices
+            .filter { scores[it] >= scoreThreshold }
+            .sortedByDescending { scores[it] }
+
+        if (filteredSortedIndices.isEmpty()) return
+
+        // Pre-compute areas for all boxes (using the offset boxes)
+        val areas = FloatArray(boxes.size)
+        for (i in boxes.indices) {
+            areas[i] = boxes[i].width() * boxes[i].height()
+        }
+
+        // Bit set is much faster than boolean array for large numbers of boxes
+        val suppressed = BitSet(boxes.size)
+
+        // Process boxes in order of decreasing confidence
+        for (i in filteredSortedIndices.indices) {
+            val currentIdx = filteredSortedIndices[i]
+
+            // Skip if this box is already suppressed
+            if (suppressed.get(currentIdx)) continue
+
+            // Add current box index to the output list
+            indices.add(currentIdx)
+
+            // Get current box data (with offset)
+            val currentBox = boxes[currentIdx]
+            val area1 = areas[currentIdx]
+
+            // Early termination - if we've added enough boxes
+            if (indices.size >= MAX_DETECTIONS) {
+                break
+            }
+
+            // Compare with remaining boxes
+            for (j in i + 1 until filteredSortedIndices.size) {
+                val compareIdx = filteredSortedIndices[j]
+
+                // Skip if already suppressed
+                if (suppressed.get(compareIdx)) continue
+
+                val compareBox = boxes[compareIdx]
+
+                // Calculate intersection dimensions
+                val overlapWidth = Math.min(currentBox.right, compareBox.right) -
+                                  Math.max(currentBox.left, compareBox.left)
+                val overlapHeight = Math.min(currentBox.bottom, compareBox.bottom) -
+                                   Math.max(currentBox.top, compareBox.top)
+
+                // Calculate IoU only if boxes overlap significantly (width/height > 0)
+                if (overlapWidth > 0 && overlapHeight > 0) {
+                    val intersection = overlapWidth * overlapHeight
+                    val area2 = areas[compareIdx]
+                    val iou = intersection / (area1 + area2 - intersection + 1e-5f)
+
+                    // Suppress if IoU is above threshold
+                    if (iou > iouThreshold) {
+                        suppressed.set(compareIdx)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * Draws bounding boxes and semi-transparent masks on the provided bitmap
      */
     fun drawDetectionsMask(bitmap: Bitmap, detections: List<Detection>, maskAlpha: Float = 0.4f): Bitmap {

@@ -602,73 +602,133 @@ fun DrawDetectionsOverlay(
 }
 
 // Helper function to convert ARCore Image (YUV_420_888) to Bitmap
+// More robust implementation handling strides and buffer positions.
 fun Image.toBitmap(): Bitmap {
     if (format != ImageFormat.YUV_420_888) {
         throw IllegalArgumentException("Invalid image format, expected YUV_420_888, got $format")
     }
 
-    val yBuffer = planes[0].buffer // Y plane
-    val uBuffer = planes[1].buffer // U plane (Cb)
-    val vBuffer = planes[2].buffer // V plane (Cr)
+    val width = this.width
+    val height = this.height
+
+    val yPlane = planes[0]
+    val uPlane = planes[1]
+    val vPlane = planes[2]
+
+    val yBuffer = yPlane.buffer
+    val uBuffer = uPlane.buffer
+    val vBuffer = vPlane.buffer
+
+    // Rewind buffers before reading to ensure we start from the beginning
+    yBuffer.rewind()
+    uBuffer.rewind()
+    vBuffer.rewind()
 
     val ySize = yBuffer.remaining()
-    val uSize = uBuffer.remaining()
-    val vSize = vBuffer.remaining()
+    // Calculate the expected size for NV21 format: Y plane + VU plane (interleaved)
+    // VU plane size is width * height / 2 because U and V are subsampled by 2 in both dimensions.
+    val nv21Size = width * height + width * height / 2
+    val nv21 = ByteArray(nv21Size)
 
-    val nv21 = ByteArray(ySize + uSize + vSize)
-
-    // Copy Y plane
-    yBuffer.get(nv21, 0, ySize)
-
-    // Copy VU planes (interleaved)
-    val vPixelStride = planes[2].pixelStride
-    val uPixelStride = planes[1].pixelStride
-    val vRowStride = planes[2].rowStride
-    val uRowStride = planes[1].rowStride
-
-    val vuOrder = ByteArray(uSize + vSize)
-    var vIndex = 0
-    var uIndex = 0
-
-    if (vPixelStride == 2 && uPixelStride == 2 && vRowStride == uRowStride) {
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
-
-        val vuBuffer = ByteArray(vSize + uSize)
-        vBuffer.get(vuBuffer, 0, vSize)
-        uBuffer.get(vuBuffer, vSize, uSize)
-
-        var outputIndex = ySize
-        var vInputIndex = 0
-        var uInputIndex = vSize
-        val uvWidth = width / 2
-        val uvHeight = height / 2
-        for (row in 0 until uvHeight) {
-            for (col in 0 until uvWidth) {
-                val vuBaseIndex = row * vRowStride + col * vPixelStride
-                if (vuBaseIndex < vSize && vuBaseIndex < uSize) {
-                    nv21[outputIndex++] = vuBuffer[vInputIndex]
-                    nv21[outputIndex++] = vuBuffer[uInputIndex]
-                    vInputIndex += vPixelStride
-                    uInputIndex += uPixelStride
-                } else {
-                    if (outputIndex < nv21.size) nv21[outputIndex++] = 128.toByte()
-                    if (outputIndex < nv21.size) nv21[outputIndex++] = 128.toByte()
-                }
-            }
-            vInputIndex = (row + 1) * vRowStride
-            uInputIndex = vSize + (row + 1) * uRowStride
-        }
+    // 1. Copy Y Plane
+    val yRowStride = yPlane.rowStride
+    val yPixelStride = yPlane.pixelStride // Should be 1 for Y plane
+    var yOffset = 0
+    if (yRowStride == width * yPixelStride) {
+        // If stride matches width, copy directly
+        yBuffer.get(nv21, 0, ySize)
+        yOffset = ySize // Set offset to end of Y data
     } else {
-        Log.w(TAG, "Using simplified YUV->NV21 conversion due to unexpected strides.")
-        vBuffer.get(nv21, ySize, vSize)
-        uBuffer.get(nv21, ySize + vSize, uSize)
+        // If stride doesn't match width (e.g., padding), copy row by row
+        for (row in 0 until height) {
+            yBuffer.position(row * yRowStride) // Go to the start of the current row in the buffer
+            yBuffer.get(nv21, yOffset, width) // Copy 'width' bytes (one row of Y data)
+            yOffset += width
+        }
+    }
+    // yOffset should now be exactly width * height
+
+    // 2. Copy VU Planes (interleaved VUVUVU... for NV21)
+    val uRowStride = uPlane.rowStride
+    val vRowStride = vPlane.rowStride
+    val uPixelStride = uPlane.pixelStride // Stride between consecutive U samples
+    val vPixelStride = vPlane.pixelStride // Stride between consecutive V samples
+
+    // UV plane dimensions
+    val uvWidth = width / 2
+    val uvHeight = height / 2
+
+    // Temporary buffers to hold one row of U and V data
+    // Size them based on row stride to accommodate potential padding
+    val uRowBytes = ByteArray(uRowStride)
+    val vRowBytes = ByteArray(vRowStride)
+
+    // Iterate through UV rows (half the height)
+    for (row in 0 until uvHeight) {
+        // Read the entire V row from vBuffer into vRowBytes
+        val vRowPos = row * vRowStride
+        vBuffer.position(vRowPos)
+        // Check remaining bytes before reading
+        if (vBuffer.remaining() < vRowStride) {
+             Log.e(TAG, "Insufficient data in V buffer for row $row. Remaining: ${vBuffer.remaining()}, Need: $vRowStride")
+             // Handle error: maybe fill remaining nv21 with default or throw?
+             // For now, fill remaining VU part with gray and break
+             nv21.fill(128.toByte(), yOffset, nv21Size)
+             yOffset = nv21Size // Mark as filled
+             break
+        }
+        vBuffer.get(vRowBytes, 0, vRowStride)
+
+        // Read the entire U row from uBuffer into uRowBytes
+        val uRowPos = row * uRowStride
+        uBuffer.position(uRowPos)
+        if (uBuffer.remaining() < uRowStride) {
+             Log.e(TAG, "Insufficient data in U buffer for row $row. Remaining: ${uBuffer.remaining()}, Need: $uRowStride")
+             nv21.fill(128.toByte(), yOffset, nv21Size)
+             yOffset = nv21Size
+             break
+        }
+        uBuffer.get(uRowBytes, 0, uRowStride)
+
+        // Interleave V and U bytes from the row buffers into nv21
+        for (col in 0 until uvWidth) {
+            val vIndex = col * vPixelStride
+            val uIndex = col * uPixelStride
+
+            // Ensure indices are within the bounds of the row byte arrays
+            if (vIndex >= vRowBytes.size || uIndex >= uRowBytes.size) {
+                Log.w(TAG, "Pixel index out of bounds for row $row, col $col. vIdx=$vIndex, uIdx=$uIndex")
+                // Put default gray values if out of bounds
+                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // V
+                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // U
+                continue // Skip to next column
+            }
+
+            // Check bounds for nv21 array as well
+            if (yOffset < nv21Size) {
+                nv21[yOffset++] = vRowBytes[vIndex] // V byte
+            }
+            if (yOffset < nv21Size) {
+                nv21[yOffset++] = uRowBytes[uIndex] // U byte
+            } else {
+                // Should not happen if nv21Size calculation is correct, but good to check
+                Log.w(TAG, "NV21 buffer overflow detected at row $row, col $col")
+                break // Stop filling this row
+            }
+        }
+         if (yOffset >= nv21Size) break // Stop if nv21 is full
     }
 
+    // 3. Convert NV21 byte array to YuvImage
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
-    val out = ByteArrayOutputStream()
-    yuvImage.compressToJpeg(Rect(0, 0, width, height), 100, out)
 
+    // 4. Convert YuvImage to JPEG stream
+    val out = ByteArrayOutputStream()
+    // Use a reasonable quality; 90 is often good.
+    yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
+
+    // 5. Decode JPEG stream to Bitmap
     val imageBytes = out.toByteArray()
     return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+        ?: throw RuntimeException("BitmapFactory.decodeByteArray returned null") // Handle potential decode failure
 }
