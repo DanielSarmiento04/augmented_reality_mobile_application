@@ -55,6 +55,8 @@ import com.example.augmented_mobile_application.ai.YOLO11Detector
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.ResourceExhaustedException
 import java.util.concurrent.TimeUnit // Import TimeUnit if needed for interruption logic later
+import kotlin.math.ceil
+import kotlin.math.min
 
 private const val TAG = "ARView"
 // Define the target class ID you are interested in (e.g., 82 for 'person' in COCO, adjust as needed)
@@ -615,109 +617,138 @@ fun Image.toBitmap(): Bitmap {
     val uPlane = planes[1]
     val vPlane = planes[2]
 
-    val yBuffer = yPlane.buffer
-    val uBuffer = uPlane.buffer
-    val vBuffer = vPlane.buffer
+    val yBuffer = yPlane.buffer.apply { rewind() } // Ensure buffer is rewound
+    val uBuffer = uPlane.buffer.apply { rewind() } // Ensure buffer is rewound
+    val vBuffer = vPlane.buffer.apply { rewind() } // Ensure buffer is rewound
 
-    // Rewind buffers before reading to ensure we start from the beginning
-    yBuffer.rewind()
-    uBuffer.rewind()
-    vBuffer.rewind()
-
-    val ySize = yBuffer.remaining()
-    // Calculate the expected size for NV21 format: Y plane + VU plane (interleaved)
-    // VU plane size is width * height / 2 because U and V are subsampled by 2 in both dimensions.
-    val nv21Size = width * height + width * height / 2
-    val nv21 = ByteArray(nv21Size)
-
-    // 1. Copy Y Plane
     val yRowStride = yPlane.rowStride
-    val yPixelStride = yPlane.pixelStride // Should be 1 for Y plane
-    var yOffset = 0
-    if (yRowStride == width * yPixelStride) {
-        // If stride matches width, copy directly
-        yBuffer.get(nv21, 0, ySize)
-        yOffset = ySize // Set offset to end of Y data
-    } else {
-        // If stride doesn't match width (e.g., padding), copy row by row
-        for (row in 0 until height) {
-            yBuffer.position(row * yRowStride) // Go to the start of the current row in the buffer
-            yBuffer.get(nv21, yOffset, width) // Copy 'width' bytes (one row of Y data)
-            yOffset += width
-        }
-    }
-    // yOffset should now be exactly width * height
-
-    // 2. Copy VU Planes (interleaved VUVUVU... for NV21)
     val uRowStride = uPlane.rowStride
     val vRowStride = vPlane.rowStride
     val uPixelStride = uPlane.pixelStride // Stride between consecutive U samples
     val vPixelStride = vPlane.pixelStride // Stride between consecutive V samples
+    val yPixelStride = yPlane.pixelStride // Correctly get pixel stride for Y plane
 
-    // UV plane dimensions
-    val uvWidth = width / 2
-    val uvHeight = height / 2
+    // Calculate the expected size for NV21 format: Y plane + VU plane (interleaved)
+    val nv21Size = width * height + ceil(height / 2.0).toInt() * ceil(width / 2.0).toInt() * 2
+    val nv21 = ByteArray(nv21Size)
+
+    // 1. Copy Y Plane
+    var yOffset = 0
+    if (yPixelStride == 1 && yRowStride == width) { // Use corrected yPixelStride
+        // If stride matches width and pixel stride is 1, copy directly
+        yBuffer.get(nv21, 0, width * height)
+        yOffset = width * height
+    } else {
+        // If stride doesn't match width (e.g., padding) or pixel stride > 1, copy row by row
+        val yRowData = ByteArray(yRowStride)
+        for (row in 0 until height) {
+            yBuffer.position(row * yRowStride) // Go to the start of the current row in the buffer
+            // Check remaining bytes before reading the row
+            // Use yPixelStride here
+            if (yBuffer.remaining() < width * yPixelStride) {
+                 Log.e(TAG, "Insufficient data in Y buffer for row $row. Remaining: ${yBuffer.remaining()}, Need: ${width * yPixelStride}")
+                 // Handle error: maybe fill remaining nv21 with default or throw?
+                 nv21.fill(128.toByte(), yOffset, nv21Size) // Fill remaining with gray
+                 yOffset = nv21Size // Mark as filled
+                 break
+            }
+            // Read the row data considering pixel stride
+            if (yPixelStride == 1) { // Use corrected yPixelStride
+                yBuffer.get(nv21, yOffset, width)
+            } else {
+                // Handle pixel stride > 1 if necessary (less common for Y)
+                // Use yPixelStride here
+                yBuffer.get(yRowData, 0, width * yPixelStride)
+                for (col in 0 until width) {
+                    // Use yPixelStride here
+                    nv21[yOffset + col] = yRowData[col * yPixelStride]
+                }
+            }
+            yOffset += width
+        }
+    }
+    // yOffset should now be exactly width * height if no error occurred
+
+    // 2. Copy VU Planes (interleaved VUVUVU... for NV21)
+    // UV plane dimensions (use ceil for odd dimensions)
+    val uvWidth = ceil(width / 2.0).toInt()
+    val uvHeight = ceil(height / 2.0).toInt()
 
     // Temporary buffers to hold one row of U and V data
-    // Size them based on row stride to accommodate potential padding
     val uRowBytes = ByteArray(uRowStride)
     val vRowBytes = ByteArray(vRowStride)
 
     // Iterate through UV rows (half the height)
     for (row in 0 until uvHeight) {
-        // Read the entire V row from vBuffer into vRowBytes
         val vRowPos = row * vRowStride
-        vBuffer.position(vRowPos)
-        // Check remaining bytes before reading
-        if (vBuffer.remaining() < vRowStride) {
-             Log.e(TAG, "Insufficient data in V buffer for row $row. Remaining: ${vBuffer.remaining()}, Need: $vRowStride")
-             // Handle error: maybe fill remaining nv21 with default or throw?
-             // For now, fill remaining VU part with gray and break
-             nv21.fill(128.toByte(), yOffset, nv21Size)
-             yOffset = nv21Size // Mark as filled
-             break
-        }
-        vBuffer.get(vRowBytes, 0, vRowStride)
-
-        // Read the entire U row from uBuffer into uRowBytes
         val uRowPos = row * uRowStride
-        uBuffer.position(uRowPos)
-        if (uBuffer.remaining() < uRowStride) {
-             Log.e(TAG, "Insufficient data in U buffer for row $row. Remaining: ${uBuffer.remaining()}, Need: $uRowStride")
-             nv21.fill(128.toByte(), yOffset, nv21Size)
-             yOffset = nv21Size
-             break
+
+        // Ensure we don't read past buffer limits
+        if (vRowPos >= vBuffer.capacity() || uRowPos >= uBuffer.capacity()) {
+            Log.w(TAG, "Calculated row position exceeds buffer capacity for UV row $row.")
+            break // Stop processing UV data
         }
-        uBuffer.get(uRowBytes, 0, uRowStride)
+
+        vBuffer.position(vRowPos)
+        uBuffer.position(uRowPos)
+
+        // Determine actual number of bytes to read for this row (might be less than stride at the end)
+        val vBytesToRead = min(vRowStride, vBuffer.remaining())
+        val uBytesToRead = min(uRowStride, uBuffer.remaining())
+
+        // Read the available V row data
+        if (vBytesToRead > 0) {
+            vBuffer.get(vRowBytes, 0, vBytesToRead)
+            // Fill remaining part of buffer if read less than expected stride (e.g., last row)
+            if (vBytesToRead < vRowStride) vRowBytes.fill(0, vBytesToRead, vRowStride)
+        } else {
+            Log.w(TAG, "No remaining data in V buffer for row $row.")
+            vRowBytes.fill(0) // Fill with zeros if no data
+        }
+
+        // Read the available U row data
+        if (uBytesToRead > 0) {
+            uBuffer.get(uRowBytes, 0, uBytesToRead)
+            if (uBytesToRead < uRowStride) uRowBytes.fill(0, uBytesToRead, uRowStride)
+        } else {
+            Log.w(TAG, "No remaining data in U buffer for row $row.")
+            uRowBytes.fill(0) // Fill with zeros if no data
+        }
+
 
         // Interleave V and U bytes from the row buffers into nv21
         for (col in 0 until uvWidth) {
             val vIndex = col * vPixelStride
             val uIndex = col * uPixelStride
 
-            // Ensure indices are within the bounds of the row byte arrays
-            if (vIndex >= vRowBytes.size || uIndex >= uRowBytes.size) {
-                Log.w(TAG, "Pixel index out of bounds for row $row, col $col. vIdx=$vIndex, uIdx=$uIndex")
+            // Check bounds for row byte arrays
+            if (vIndex >= vRowStride || uIndex >= uRowStride) {
+                Log.w(TAG, "Pixel index out of bounds for row $row, col $col. vIdx=$vIndex, uIdx=$uIndex (Strides: v=$vRowStride, u=$uRowStride)")
                 // Put default gray values if out of bounds
                 if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // V
                 if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // U
                 continue // Skip to next column
             }
 
-            // Check bounds for nv21 array as well
-            if (yOffset < nv21Size) {
+            // Check bounds for nv21 array
+            if (yOffset + 1 < nv21Size) {
                 nv21[yOffset++] = vRowBytes[vIndex] // V byte
-            }
-            if (yOffset < nv21Size) {
                 nv21[yOffset++] = uRowBytes[uIndex] // U byte
             } else {
-                // Should not happen if nv21Size calculation is correct, but good to check
+                // Stop if nv21 buffer is full
                 Log.w(TAG, "NV21 buffer overflow detected at row $row, col $col")
                 break // Stop filling this row
             }
         }
          if (yOffset >= nv21Size) break // Stop if nv21 is full
     }
+
+    // Handle cases where nv21 might not be fully populated due to errors/early exits
+    if (yOffset < nv21Size) {
+        Log.w(TAG, "NV21 buffer not fully populated ($yOffset / $nv21Size). Filling remaining with gray.")
+        nv21.fill(128.toByte(), yOffset, nv21Size)
+    }
+
 
     // 3. Convert NV21 byte array to YuvImage
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)

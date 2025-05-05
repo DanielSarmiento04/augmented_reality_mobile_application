@@ -448,8 +448,32 @@ class YOLO11Detector(
      */
     private fun preprocessImageOptimized(image: Mat, outImage: Mat, newShape: Size): ByteBuffer {
         try {
-            letterBoxOptimized(image, outImage, newShape, Scalar(114.0, 114.0, 114.0)) // Use Mat directly
+            // Ensure input image is usable (e.g., CV_8UC3 or CV_8UC4)
+            if (image.type() != CvType.CV_8UC3 && image.type() != CvType.CV_8UC4) {
+                debug("Warning: Input image to preprocessImageOptimized has unexpected type: ${image.type()}. Attempting conversion.")
+                // Attempt conversion if needed, though the input should ideally be correct already
+                val tempMat = Mat()
+                Imgproc.cvtColor(image, tempMat, Imgproc.COLOR_BGRA2BGR) // Example conversion
+                letterBoxOptimized(tempMat, outImage, newShape, Scalar(114.0, 114.0, 114.0))
+                tempMat.release()
+            } else {
+                letterBoxOptimized(image, outImage, newShape, Scalar(114.0, 114.0, 114.0)) // Use Mat directly
+            }
+
+            // Ensure outImage is BGR before converting to RGB
+            if (outImage.channels() == 4) {
+                 Imgproc.cvtColor(outImage, outImage, Imgproc.COLOR_BGRA2BGR)
+            }
+            // Convert final letterboxed image to RGB for the model input
             Imgproc.cvtColor(outImage, outImage, Imgproc.COLOR_BGR2RGB)
+
+            // --- Ensure outImage is CV_8UC3 before reading bytes for quantized model ---
+            if (outImage.type() != CvType.CV_8UC3) {
+                 debug("Converting outImage from type ${outImage.type()} to CV_8UC3 before buffer fill.")
+                 outImage.convertTo(outImage, CvType.CV_8UC3)
+            }
+            // --- End Fix ---
+
 
             // Prepare input buffer - reuse existing if possible
             if (inputBuffer == null) {
@@ -463,13 +487,31 @@ class YOLO11Detector(
             // Fill input buffer efficiently with specialized paths for quantized vs float models
             if (isQuantized) {
                 // Direct byte copy for quantized models - much faster
-                val pixels = ByteArray(outImage.width() * outImage.height() * outImage.channels())
-                outImage.get(0, 0, pixels)
-                inputBuffer?.put(pixels)
+                val numElements = outImage.total() * outImage.channels()
+                // Ensure the byte array size matches the Mat data size
+                if (numElements > Int.MAX_VALUE) throw RuntimeException("Mat size exceeds ByteArray limits")
+                val pixels = ByteArray(numElements.toInt())
+
+                // Check type again just before get - should be CV_8UC3 now
+                if (outImage.type() == CvType.CV_8UC3) {
+                    outImage.get(0, 0, pixels) // Read all pixel data
+                    inputBuffer?.put(pixels)
+                } else {
+                    // This should not happen after the conversion above
+                    throw RuntimeException("Mat type is still not CV_8UC3 before get(): ${outImage.type()}")
+                }
             } else {
                 // For float models - normalize while copying to avoid extra matrix allocation
                 val floatBuffer = inputBuffer?.asFloatBuffer()
-                val pixelValues = FloatArray(outImage.channels()) // Reusable buffer for pixel values
+                // Ensure outImage is CV_32FC3 for float processing if needed, although direct read is fine
+                 if (outImage.type() != CvType.CV_8UC3) {
+                     // This path assumes the input Mat is CV_8UC3 for reading pixel values
+                     // If it could be something else, conversion might be needed here too.
+                     // However, the previous conversion should ensure it's CV_8UC3.
+                     debug("Warning: Mat type for float processing is not CV_8UC3: ${outImage.type()}")
+                 }
+
+                val pixelValues = ByteArray(outImage.channels()) // Reusable buffer for pixel values (byte)
                 val rows = outImage.rows()
                 val cols = outImage.cols()
                 val channels = outImage.channels()
@@ -477,9 +519,10 @@ class YOLO11Detector(
                 // Direct normalization loop avoids extra matrix allocation
                 for (y in 0 until rows) {
                     for (x in 0 until cols) {
-                        outImage.get(y, x, pixelValues) // Read pixel into buffer
+                        outImage.get(y, x, pixelValues) // Read pixel into byte buffer
                         for (c in 0 until channels) {
-                            floatBuffer?.put(pixelValues[c] / 255.0f) // Normalize and put
+                            // Convert unsigned byte [0, 255] to float [0.0, 1.0]
+                            floatBuffer?.put((pixelValues[c].toInt() and 0xFF) / 255.0f)
                         }
                     }
                 }
@@ -491,66 +534,6 @@ class YOLO11Detector(
         } catch (e: Exception) {
             debug("Error in optimized preprocessing: ${e.message}")
             throw RuntimeException("Preprocessing failed", e)
-        }
-    }
-
-    /**
-     * Optimized letterboxing with minimal padding and memory allocations
-     * Modified to work directly with Mat.
-     */
-    private fun letterBoxOptimized(src: Mat, dst: Mat, targetSize: Size, color: Scalar) {
-        try {
-            // Calculate scaling ratios
-            val wRatio = targetSize.width / src.width()
-            val hRatio = targetSize.height / src.height()
-            val ratio = Math.min(wRatio, hRatio)
-
-            // Calculate new dimensions
-            val newUnpadWidth = (src.width() * ratio).toInt()
-            val newUnpadHeight = (src.height() * ratio).toInt()
-
-            // Calculate padding
-            val dw = (targetSize.width - newUnpadWidth).toInt()
-            val dh = (targetSize.height - newUnpadHeight).toInt()
-
-            // Calculate padding on each side
-            val top = dh / 2
-            val bottom = dh - top
-            val left = dw / 2
-            val right = dw - left
-
-            // Optimize resize interpolation method based on scaling
-            val interpolation = if (ratio > 1) Imgproc.INTER_LINEAR else Imgproc.INTER_AREA
-
-            // Resize the image efficiently
-            val resized: Mat
-            val needsRelease: Boolean
-            if (src.nativeObjAddr == dst.nativeObjAddr) {
-                resized = Mat() // Create a temporary Mat
-                needsRelease = true
-            } else {
-                resized = dst // Resize directly into dst if it's different
-                needsRelease = false
-            }
-
-            Imgproc.resize(src, resized, Size(newUnpadWidth.toDouble(), newUnpadHeight.toDouble()), 0.0, 0.0, interpolation)
-
-            // Apply padding only if needed
-            if (dw > 0 || dh > 0) {
-                Core.copyMakeBorder(resized, dst, top, bottom, left, right, Core.BORDER_CONSTANT, color)
-            } else if (needsRelease) {
-                // If no padding was needed BUT we used a temporary Mat, copy it to dst
-                resized.copyTo(dst)
-            }
-
-            // Cleanup temp mat if created
-            if (needsRelease) {
-                resized.release()
-            }
-
-        } catch (e: Exception) {
-            debug("Error in letterbox optimization: ${e.message}")
-            throw RuntimeException("Letterboxing failed", e)
         }
     }
 
@@ -568,6 +551,72 @@ class YOLO11Detector(
         } catch (e: Exception) {
             debug("Error during optimized inference: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * Optimized letterboxing with minimal padding and memory allocations
+     * Modified to work directly with Mat.
+     */
+    private fun letterBoxOptimized(src: Mat, dst: Mat, targetSize: Size, color: Scalar) {
+        try {
+            // Calculate scaling ratios
+            val wRatio = targetSize.width / src.width()
+            val hRatio = targetSize.height / src.height()
+            val ratio = min(wRatio, hRatio) // Use Kotlin's min
+
+            // Calculate new dimensions
+            val newUnpadWidth = (src.width() * ratio).toInt()
+            val newUnpadHeight = (src.height() * ratio).toInt()
+
+            // Calculate padding
+            val dw = (targetSize.width - newUnpadWidth).toInt()
+            val dh = (targetSize.height - newUnpadHeight).toInt()
+
+            // Calculate padding on each side (ensure non-negative)
+            val top = max(0, dh / 2)
+            val bottom = max(0, dh - top)
+            val left = max(0, dw / 2)
+            val right = max(0, dw - left)
+
+            // Optimize resize interpolation method based on scaling
+            val interpolation = if (ratio > 1) Imgproc.INTER_LINEAR else Imgproc.INTER_AREA
+
+            // Resize the image efficiently
+            val resized: Mat
+            val needsRelease: Boolean
+            // Check if src and dst are the same object OR if dst is not initialized properly
+            if (src.nativeObjAddr == dst.nativeObjAddr || dst.empty() || dst.size() != targetSize || dst.type() != src.type()) {
+                resized = Mat() // Create a temporary Mat for resizing result
+                needsRelease = true
+            } else {
+                // If dst is suitable, resize directly into a temporary Mat first
+                // to avoid modifying dst before padding if padding is needed.
+                // If no padding is needed, we can resize directly into dst later.
+                resized = Mat()
+                needsRelease = true
+            }
+
+            Imgproc.resize(src, resized, Size(newUnpadWidth.toDouble(), newUnpadHeight.toDouble()), 0.0, 0.0, interpolation)
+
+            // Apply padding only if needed
+            if (dw > 0 || dh > 0) {
+                // Ensure dst has the correct size and type before padding
+                dst.create(targetSize, resized.type()) // Create or reallocate dst if necessary
+                Core.copyMakeBorder(resized, dst, top, bottom, left, right, Core.BORDER_CONSTANT, color)
+            } else {
+                 // If no padding was needed, copy the resized result to dst
+                 resized.copyTo(dst)
+            }
+
+            // Cleanup temp mat if created
+            if (needsRelease) {
+                resized.release()
+            }
+
+        } catch (e: Exception) {
+            debug("Error in letterbox optimization: ${e.message}")
+            throw RuntimeException("Letterboxing failed", e)
         }
     }
 
@@ -718,9 +767,9 @@ class YOLO11Detector(
      * FIXED: Improved coordinate scaling to account for minimal padding
      */
     private fun scaleCoords(
-        imageShape: Size,
-        coords: RectF,
-        imageOriginalShape: Size,
+        imageShape: Size, // Size of the input image to the model (e.g., 640x640 after letterboxing)
+        coords: RectF,    // Bounding box coordinates relative to imageShape (normalized [0,1] or absolute pixels)
+        imageOriginalShape: Size, // Size of the original camera image
         clip: Boolean = true
     ): RectF {
         // Get dimensions in pixels
@@ -732,21 +781,41 @@ class YOLO11Detector(
         // Calculate scaling factor (gain) used during letterboxing
         val gain = min(inputWidth / originalWidth, inputHeight / originalHeight)
 
-        // Calculate padding added during letterboxing
+        // Calculate padding added during letterboxing (in pixels relative to imageShape)
         val padX = (inputWidth - originalWidth * gain) / 2.0f
         val padY = (inputHeight - originalHeight * gain) / 2.0f
 
-        // Convert normalized coordinates [0-1] relative to inputShape to absolute pixel coordinates
-        val absLeft = coords.left * inputWidth
-        val absTop = coords.top * inputHeight
-        val absRight = coords.right * inputWidth
-        val absBottom = coords.bottom * inputHeight
+        // --- Determine if input coords are normalized or absolute ---
+        // Heuristic: If coords are mostly <= 1.0, assume normalized. Otherwise, assume absolute pixels relative to imageShape.
+        // A more robust way would be to know the model output format. Assuming normalized [0,1] based on typical YOLO outputs.
+        val isNormalized = coords.left <= 1.0f && coords.top <= 1.0f && coords.right <= 1.0f && coords.bottom <= 1.0f
+
+        val absLeft: Float
+        val absTop: Float
+        val absRight: Float
+        val absBottom: Float
+
+        if (isNormalized) {
+            // Convert normalized coordinates [0-1] relative to inputShape to absolute pixel coordinates
+             absLeft = coords.left * inputWidth
+             absTop = coords.top * inputHeight
+             absRight = coords.right * inputWidth
+             absBottom = coords.bottom * inputHeight
+        } else {
+            // Assume coords are already absolute pixels relative to inputShape
+             absLeft = coords.left
+             absTop = coords.top
+             absRight = coords.right
+             absBottom = coords.bottom
+        }
+
 
         // Remove padding and scale back to original image dimensions
-        val x1 = (absLeft - padX) / gain
-        val y1 = (absTop - padY) / gain
-        val x2 = (absRight - padX) / gain
-        val y2 = (absBottom - padY) / gain
+        // Subtract padding, then divide by gain
+        var x1 = (absLeft - padX) / gain
+        var y1 = (absTop - padY) / gain
+        var x2 = (absRight - padX) / gain
+        var y2 = (absBottom - padY) / gain
 
         // Create result rectangle in original image coordinates
         val result = RectF(x1, y1, x2, y2)
