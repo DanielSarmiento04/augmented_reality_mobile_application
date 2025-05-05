@@ -148,33 +148,36 @@ fun ARView(
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
+                // --- TAP DETECTION FOR PLACEMENT ---
                 .pointerInteropFilter { event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
                             // Handle model placement on tap if not already placed
                             arSceneViewRef.value?.let { arSceneView ->
                                 val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
+                                // --- CHECK IF MODEL IS PLACED AND HIT TEST IS VALID ---
                                 if (!modelPlaced && !hitResults.isNullOrEmpty()) {
                                     hitResults.firstOrNull()?.let { hit ->
-                                        // Place model at hit point
+                                        // --- CREATE ANCHOR AT HIT POINT ---
                                         val anchor = hit.createAnchor()
                                         val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
                                         // Use entity-based addition
                                         arSceneView.scene.addEntity(anchorNode.entity)
 
                                         modelNodeRef.value?.let { modelNode ->
-                                            // Add model to scene directly
+                                            // --- ADD MODEL TO SCENE ---
                                             arSceneView.scene.addEntity(modelNode.entity)
-                                            // Position model relative to anchor
+                                            // --- POSITION MODEL AT ANCHOR ---
                                             modelNode.transform.position = anchorNode.transform.position
 
+                                            // --- UPDATE STATE ---
                                             modelPlaced = true
                                             anchorNodeRef.value = anchorNode
                                         }
                                     }
                                 }
                             }
-                            false
+                            false // Consume the event if handled, but false here allows other gestures potentially
                         }
                         else -> false
                     }
@@ -284,17 +287,19 @@ fun ARView(
                         }
                     }
 
-                    // Load the pump model
+                    // --- MODEL LOADING ---
                     scope.launch {
                         try {
+                            // --- LOAD THE .glb FILE ---
                             val modelNode = ModelNode(
                                 modelInstance = modelLoader.createModelInstance(
-                                    assetFileLocation = "pump/pump.glb"
+                                    assetFileLocation = "pump/pump.glb" // Your model file
                                 ),
-                                scaleToUnits = 1.0f
+                                scaleToUnits = 1.0f // Adjust scale if needed
                             ).apply {
                                 isShadowReceiver = false
                             }
+                            // --- STORE MODEL REFERENCE ---
                             modelNodeRef.value = modelNode
                             isLoadingModel = false
                         } catch (e: Exception) {
