@@ -6,6 +6,9 @@
 
 This Android application utilizes Augmented Reality (AR) and Artificial Intelligence (AI) to provide an interactive and intuitive platform for industrial equipment maintenance, specifically focusing on a centrifugal pump. The goal is to enhance knowledge management and streamline maintenance procedures by overlaying digital information, 3D models, and guided steps onto the real-world view of the equipment. The application integrates user authentication, PDF manual viewing, and real-time object detection to assist technicians during maintenance tasks.
 
+> [!IMPORTANT]
+> Best model tf and glb files might put in assets, must be requested from the authors
+
 ## Features
 
 *   **User Authentication:** Secure login system for authorized personnel.
