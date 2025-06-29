@@ -62,13 +62,18 @@ class YOLO11Detector(
 ) {
     // Detection parameters - matching C++ implementation
     companion object {
-        // Match the C++ implementation thresholds
-        const val CONFIDENCE_THRESHOLD = 0.25f  // Changed from 0.4f to match C++ code
-        const val IOU_THRESHOLD = 0.45f         // Changed from 0.3f to match C++ code
+        // Critical: Match exact thresholds from your successful Python/C++ implementation
+        const val CONFIDENCE_THRESHOLD = 0.4f  // Restore to your working threshold
+        const val IOU_THRESHOLD = 0.45f         
         private const val TAG = "YOLO11Detector"
 
         // Maximum detections after NMS
         private const val MAX_DETECTIONS = 300
+        
+        // Class validation - ensure we're detecting the right class
+        const val PUMP_CLASS_ID = 81    // "pump" class from your classes.txt
+        const val CUP_CLASS_ID = 41     // "cup" class as requested
+        const val PIPE_CLASS_ID = 82    // "pipe" class
     }
 
     // Data structures for model and inference
@@ -107,72 +112,11 @@ class YOLO11Detector(
             debug("Initializing YOLO11Detector with model: $modelPath, useNNAPI: $useNNAPI, useGPU: $useGPU")
             debug("Device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.SDK_INT}")
 
-            // Load model with proper options
-            val tfliteOptions = Interpreter.Options()
-            var delegateApplied = false
-
-            // NNAPI Delegate setup (preferred for NPU/DSP acceleration)
-            if (useNNAPI) {
-                delegateApplied = setupNnApiDelegate(tfliteOptions)
-            }
-
-            // GPU Delegate setup with improved validation and error recovery
-            // Note: Alternatively, consider using the tensorflow-lite-gpu-delegate-plugin
-            // which simplifies setup but offers less manual control.
-            if (!delegateApplied && useGPU) {
-                try {
-                    val compatList = CompatibilityList()
-                    debug("GPU delegate supported on device: ${compatList.isDelegateSupportedOnThisDevice}")
-
-                    if (compatList.isDelegateSupportedOnThisDevice) {
-                        // First try to create GPU delegate without configuring options
-                        // This can help detect early incompatibilities
-                        try {
-                            val tempDelegate = GpuDelegate()
-                            tempDelegate.close() // Just testing creation
-                            debug("Basic GPU delegate creation successful")
-                        } catch (e: Exception) {
-                            debug("Basic GPU delegate test failed: ${e.message}")
-                            throw Exception("Device reports GPU compatible but fails basic delegate test")
-                        }
-
-                        debug("Configuring GPU acceleration using default options")
-
-                        // Use the default GpuDelegate constructor.
-                        // GpuDelegate.Options() is deprecated. TFLite's defaults are generally recommended.
-                        // Consult TFLite 2.16.1 documentation for specific advanced options if needed,
-                        // potentially via InterpreterApi.Options.addDelegateFactory().
-                        gpuDelegate = GpuDelegate() // Use default constructor
-                        tfliteOptions.addDelegate(gpuDelegate)
-                        delegateApplied = true
-                        debug("GPU delegate successfully created and added (using default options)")
-
-                        // Always configure CPU fallback options
-                        configureCpuOptions(tfliteOptions)
-
-                    } else {
-                        debug("GPU acceleration not supported on this device, using CPU only")
-                        configureCpuOptions(tfliteOptions)
-                    }
-                } catch (e: Exception) {
-                    debug("Error setting up GPU acceleration: ${e.message}, stack: ${e.stackTraceToString()}")
-                    debug("Falling back to CPU execution")
-                    // Clean up any GPU resources
-                    try {
-                        gpuDelegate?.close()
-                        gpuDelegate = null
-                    } catch (closeEx: Exception) {
-                        debug("Error closing GPU delegate: ${closeEx.message}")
-                    }
-                    configureCpuOptions(tfliteOptions)
-                }
-            }
-
-            // Configure CPU if no delegate was applied
-            if (!delegateApplied) {
-                debug("No hardware delegate applied (NNAPI disabled/failed, GPU disabled/failed). Using CPU.")
-                configureCpuOptions(tfliteOptions)
-            } // Removed redundant 'else' block for CPU config
+            // Load model with optimal configuration
+            val performanceConfig = TensorFlowLiteOptimizer.getOptimalConfig(context)
+            val tfliteOptions = TensorFlowLiteOptimizer.configureInterpreter(performanceConfig)
+            
+            debug("Using performance config: $performanceConfig")
 
             // Enhanced model loading with diagnostics
             val modelBuffer: MappedByteBuffer
@@ -1045,32 +989,76 @@ class YOLO11Detector(
     }
 
     /**
-     * Get class name for a given class ID
-     * @param classId The class ID to get the name for
-     * @return The class name or "Unknown" if the ID is invalid
-     */
-    fun getClassName(classId: Int): String {
-        return if (classId >= 0 && classId < classNames.size) {
-            classNames[classId]
-        } else {
-            "Unknown"
-        }
-    }
-
-    /**
-     * Get details about the model's input requirements
-     * @return String containing shape and data type information
+     * Get detailed input information for debugging
      */
     fun getInputDetails(): String {
         val inputTensor = interpreter.getInputTensor(0)
-        val shape = inputTensor.shape()
-        val type = when(inputTensor.dataType()) {
-            org.tensorflow.lite.DataType.FLOAT32 -> "FLOAT32"
-            org.tensorflow.lite.DataType.UINT8 -> "UINT8"
-            else -> "OTHER"
-        }
-        return "Shape: ${shape.joinToString()}, Type: $type"
+        val outputTensor = interpreter.getOutputTensor(0)
+        return """
+            Model Input: ${inputTensor.shape().joinToString("x")}
+            Model Output: ${outputTensor.shape().joinToString("x")}
+            Input Type: ${inputTensor.dataType()}
+            Is Quantized: $isQuantized
+            Classes: $numClasses
+            Target Class 41: ${getClassName(41)}
+            Pump Class 81: ${getClassName(81)}
+            Pipe Class 82: ${getClassName(82)}
+        """.trimIndent()
     }
+    
+    /**
+     * Get class name by ID with validation
+     */
+    fun getClassName(classId: Int): String? {
+        return if (classId >= 0 && classId < classNames.size) {
+            classNames[classId]
+        } else {
+            null
+        }
+    }
+    
+    /**
+     * Validate that a specific class ID exists
+     */
+    fun validateClassId(classId: Int): Boolean {
+        return classId >= 0 && classId < classNames.size
+    }
+    
+    /**
+     * Find class ID by name (case insensitive)
+     */
+    fun findClassId(className: String): Int? {
+        return classNames.indexOfFirst { 
+            it.equals(className, ignoreCase = true) 
+        }.takeIf { it >= 0 }
+    }
+    
+    /**
+     * Log model validation info - call this after initialization
+     */
+    fun logModelValidation() {
+        debug("=== Model Validation ===")
+        debug("Total classes: ${classNames.size}")
+        debug("Model expects: $numClasses classes")
+        debug("Input size: ${inputWidth}x${inputHeight}")
+        debug("Quantized: $isQuantized")
+        
+        // Log specific classes we're interested in
+        val targetClasses = listOf(41, 81, 82)
+        targetClasses.forEach { classId ->
+            val className = getClassName(classId)
+            debug("Class $classId: ${className ?: "INVALID"}")
+        }
+        
+        // Verify target class exists
+        if (!validateClassId(41)) {
+            debug("WARNING: Target class 41 is out of range!")
+        }
+        
+        debug("=========================")
+    }
+
+    // ...existing code...
 
     /**
      * Cleanup resources when no longer needed

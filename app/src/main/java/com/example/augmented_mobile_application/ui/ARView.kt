@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -52,6 +53,10 @@ import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.text.DecimalFormat
 import com.example.augmented_mobile_application.ai.YOLO11Detector
+import com.example.augmented_mobile_application.ai.DetectionPipeline
+import com.example.augmented_mobile_application.ai.DetectionValidator
+import com.example.augmented_mobile_application.ar.ModelPositioningManager
+import com.example.augmented_mobile_application.ar.ARCoreStateManager
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.ResourceExhaustedException
 import java.util.concurrent.TimeUnit
@@ -59,7 +64,7 @@ import kotlin.math.ceil
 import kotlin.math.min
 
 private const val TAG = "ARView"
-private const val TARGET_CLASS_ID = 82
+private const val TARGET_CLASS_ID = 41  // Changed from 82 to 41 (cup) as requested
 
 @Composable
 fun rememberYoloDetector(context: Context): YOLO11Detector? {
@@ -73,11 +78,31 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
                 context = context,
                 modelPath = modelPath,
                 labelsPath = labelsPath,
-                useNNAPI = true,
-                useGPU = true
+                useNNAPI = false,  // Disable NNAPI for more predictable results
+                useGPU = true      // Keep GPU enabled for performance
             ).also {
                 Log.i(TAG, "YOLO11Detector initialized successfully.")
                 Log.i(TAG, "Model Input Details: ${it.getInputDetails()}")
+                it.logModelValidation()  // Add validation logging
+                
+                // Validate target class
+                if (!it.validateClassId(TARGET_CLASS_ID)) {
+                    Log.e(TAG, "ERROR: Target class $TARGET_CLASS_ID is invalid!")
+                } else {
+                    Log.i(TAG, "Target class $TARGET_CLASS_ID (${it.getClassName(TARGET_CLASS_ID)}) is valid")
+                }
+                
+                // Run comprehensive validation with a test image
+                try {
+                    val testBitmap = Bitmap.createBitmap(640, 640, Bitmap.Config.ARGB_8888)
+                    val validationReport = DetectionValidator.validatePipeline(it, testBitmap)
+                    if (!validationReport.isValid) {
+                        Log.e(TAG, "Validation failed! Check logs for details.")
+                    }
+                    testBitmap.recycle()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not run validation: ${e.message}")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize YOLODetector: ${e.message}", e)
@@ -99,6 +124,17 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
     return detector
 }
 
+@Composable
+fun rememberDetectionPipeline(detector: YOLO11Detector?): DetectionPipeline? {
+    return remember(detector) {
+        detector?.let { 
+            DetectionPipeline(it, TARGET_CLASS_ID).also {
+                Log.i(TAG, "DetectionPipeline initialized")
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class, androidx.camera.core.ExperimentalGetImage::class)
 @Composable
 fun ARView(
@@ -115,10 +151,18 @@ fun ARView(
     var maintenanceStarted by remember { mutableStateOf(false) }
 
     val yoloDetector = rememberYoloDetector(context)
-    var detectionResults by remember { mutableStateOf<List<YOLO11Detector.Detection>>(emptyList()) }
-    var isDetecting by remember { mutableStateOf(false) }
-    var inferenceTimeMs by remember { mutableStateOf(0L) }
-    var isTargetDetected by remember { mutableStateOf(false) }
+    val detectionPipeline = rememberDetectionPipeline(yoloDetector)
+    val arStateManager = remember { ARCoreStateManager() }
+    
+    // Use StateFlow from DetectionPipeline instead of local state
+    val detectionResults by detectionPipeline?.detectionResults?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
+    val isTargetDetected by detectionPipeline?.isTargetDetected?.collectAsState() ?: remember { mutableStateOf(false) }
+    val inferenceTimeMs by detectionPipeline?.inferenceTimeMs?.collectAsState() ?: remember { mutableStateOf(0L) }
+    val isDetecting by detectionPipeline?.isProcessing?.collectAsState() ?: remember { mutableStateOf(false) }
+    
+    // ARCore state monitoring
+    val trackingState by arStateManager.trackingState.collectAsState()
+    val trackingFailureReason by arStateManager.trackingFailureReason.collectAsState()
 
     val instructions = listOf(
         "Escanee una superficie plana y coloque el modelo 3D",
@@ -132,6 +176,48 @@ fun ARView(
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelNodeRef = remember { mutableStateOf<ModelNode?>(null) }
     val anchorNodeRef = remember { mutableStateOf<AnchorNode?>(null) }
+    val modelPositioningManager = remember { mutableStateOf<ModelPositioningManager?>(null) }
+
+    // Initialize model positioning manager when ARSceneView is ready
+    LaunchedEffect(arSceneViewRef.value) {
+        arSceneViewRef.value?.let { sceneView ->
+            modelPositioningManager.value = ModelPositioningManager(sceneView)
+            Log.i(TAG, "ModelPositioningManager initialized")
+        }
+    }
+
+    // Update model positions when detections change
+    LaunchedEffect(detectionResults, isTargetDetected) {
+        if (maintenanceStarted && modelPlaced && isTargetDetected) {
+            modelPositioningManager.value?.updateModelPositions(
+                detections = detectionResults,
+                targetClassId = TARGET_CLASS_ID,
+                modelNode = modelNodeRef.value
+            )
+        } else {
+            // Clear models when target not detected
+            modelPositioningManager.value?.clearAllModels()
+        }
+    }
+
+    // Manage detection pipeline lifecycle
+    LaunchedEffect(maintenanceStarted, modelPlaced) {
+        if (maintenanceStarted && modelPlaced && detectionPipeline != null) {
+            Log.i(TAG, "Starting detection pipeline")
+            detectionPipeline.start()
+        } else {
+            Log.i(TAG, "Stopping detection pipeline")
+            detectionPipeline?.stop()
+        }
+    }
+
+    // Cleanup detection pipeline on dispose
+    DisposableEffect(detectionPipeline) {
+        onDispose {
+            Log.i(TAG, "Disposing detection pipeline")
+            detectionPipeline?.close()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
@@ -142,22 +228,37 @@ fun ARView(
                         MotionEvent.ACTION_DOWN -> {
                             if (maintenanceStarted && !modelPlaced) {
                                 arSceneViewRef.value?.let { arSceneView ->
-                                    val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
-                                    if (!hitResults.isNullOrEmpty()) {
-                                        hitResults.firstOrNull()?.let { hit ->
-                                            val anchor = hit.createAnchor()
-                                            val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
-                                            arSceneView.scene.addEntity(anchorNode.entity)
+                                    val frame = arSceneView.frame
+                                    // Critical: Check ARCore tracking state before hitTest
+                                    if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
+                                        try {
+                                            val hitResults = frame.hitTest(event.x, event.y)
+                                            if (!hitResults.isNullOrEmpty()) {
+                                                hitResults.firstOrNull()?.let { hit ->
+                                                    val anchor = hit.createAnchor()
+                                                    val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
+                                                    arSceneView.scene.addEntity(anchorNode.entity)
 
-                                            modelNodeRef.value?.let { modelNode ->
-                                                arSceneView.scene.addEntity(modelNode.entity)
-                                                modelNode.transform.position = anchorNode.transform.position
+                                                    modelNodeRef.value?.let { modelNode ->
+                                                        arSceneView.scene.addEntity(modelNode.entity)
+                                                        modelNode.transform.position = anchorNode.transform.position
 
-                                                modelPlaced = true
-                                                anchorNodeRef.value = anchorNode
-                                                instructionStep = maxOf(1, instructionStep)
+                                                        modelPlaced = true
+                                                        anchorNodeRef.value = anchorNode
+                                                        instructionStep = maxOf(1, instructionStep)
+                                                        
+                                                        Log.i(TAG, "Model placed successfully at anchor position")
+                                                    }
+                                                }
+                                            } else {
+                                                Log.d(TAG, "No hit results found for touch event")
                                             }
+                                        } catch (e: Exception) {
+                                            Log.e(TAG, "Error during hit test: ${e.message}", e)
                                         }
+                                    } else {
+                                        val trackingState = frame?.camera?.trackingState
+                                        Log.w(TAG, "Cannot place model - ARCore not tracking. Current state: $trackingState")
                                     }
                                 }
                             }
@@ -171,10 +272,27 @@ fun ARView(
                     arSceneViewRef.value = this
 
                     configureSession { session, config ->
+                        // Optimized ARCore configuration for better performance and tracking
                         config.focusMode = Config.FocusMode.AUTO
-                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                         config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+                        
+                        // Enable depth for better occlusion and tracking
+                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                            config.depthMode = Config.DepthMode.AUTOMATIC
+                            Log.i(TAG, "Depth mode enabled for better tracking")
+                        } else {
+                            Log.w(TAG, "Depth mode not supported on this device")
+                        }
+                        
+                        // Enable instant placement for faster model placement
+                        if (session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)) {
+                            config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+                            Log.i(TAG, "Instant placement mode enabled")
+                        }
+                        
+                        Log.i(TAG, "ARCore session configured with optimized settings")
                     }
 
                     planeRenderer.isEnabled = true
@@ -187,58 +305,35 @@ fun ARView(
                         val currentSceneView = arSceneViewRef.value
                         val currentFrame: ArFrame? = currentSceneView?.frame
 
-                        if (maintenanceStarted && modelPlaced && !isDetecting && yoloDetector != null && currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
+                        // Update ARCore state manager with current frame
+                        arStateManager.updateTrackingState(currentFrame)
+
+                        // Only process frames when in optimal conditions
+                        if (maintenanceStarted && modelPlaced && detectionPipeline != null && 
+                            arStateManager.isReadyForOperations() && arStateManager.isCameraImageAvailable()) {
+                            
                             try {
-                                currentFrame.acquireCameraImage().use { image: Image? ->
+                                currentFrame?.acquireCameraImage()?.use { image: Image? ->
                                     if (image != null) {
-                                        isDetecting = true
-
-                                        val bitmap: Bitmap = image.toBitmap()
-
-                                        scope.launch(Dispatchers.IO) {
-                                            var results: List<YOLO11Detector.Detection> = emptyList()
-                                            var timeTaken: Long = 0
+                                        // Use background thread for bitmap conversion to avoid UI blocking
+                                        scope.launch(Dispatchers.Default) {
                                             try {
-                                                val detectionPair = yoloDetector.detect(bitmap)
-                                                results = detectionPair.first
-                                                timeTaken = detectionPair.second
-
-                                                val targetFound = results.any { it.classId == TARGET_CLASS_ID }
-
-                                                withContext(Dispatchers.Main) {
-                                                    detectionResults = results
-                                                    inferenceTimeMs = timeTaken
-                                                    isTargetDetected = targetFound
-                                                }
-
+                                                val bitmap: Bitmap = image.toBitmap()
+                                                // Submit to pipeline (non-blocking)
+                                                detectionPipeline.submitFrame(bitmap)
                                             } catch (e: Exception) {
-                                                withContext(Dispatchers.Main) {
-                                                    detectionResults = emptyList()
-                                                    inferenceTimeMs = 0L
-                                                    isTargetDetected = false
-                                                }
-                                            } finally {
-                                                if (!bitmap.isRecycled) {
-                                                    bitmap.recycle()
-                                                }
-                                                withContext(Dispatchers.Main) {
-                                                    isDetecting = false
-                                                }
+                                                Log.w(TAG, "Error converting image to bitmap: ${e.message}")
                                             }
                                         }
                                     }
                                 }
+                            } catch (e: NotYetAvailableException) {
+                                // Frame not ready, skip silently
+                            } catch (e: ResourceExhaustedException) {
+                                // Camera resources exhausted, skip and log
+                                Log.w(TAG, "Camera resources exhausted, skipping frame")
                             } catch (e: Exception) {
-                                isDetecting = false
-                            }
-                        } else {
-                            if (detectionResults.isNotEmpty() || inferenceTimeMs != 0L || isTargetDetected) {
-                                detectionResults = emptyList()
-                                inferenceTimeMs = 0L
-                                isTargetDetected = false
-                            }
-                            if (isDetecting && (!maintenanceStarted || !modelPlaced || currentFrame?.camera?.trackingState != TrackingState.TRACKING)) {
-                                isDetecting = false
+                                Log.w(TAG, "Error processing camera frame: ${e.message}")
                             }
                         }
                     }
@@ -355,9 +450,7 @@ fun ARView(
                             onClick = {
                                 if (instructionStep > 1) {
                                     instructionStep--
-                                    detectionResults = emptyList()
-                                    inferenceTimeMs = 0L
-                                    isTargetDetected = false
+                                    // Detection state is now managed by DetectionPipeline
                                 }
                             },
                             enabled = maintenanceStarted && instructionStep > 1,
@@ -373,16 +466,12 @@ fun ARView(
                             onClick = {
                                 if (instructionStep < instructions.size - 1) {
                                     instructionStep++
-                                    detectionResults = emptyList()
-                                    inferenceTimeMs = 0L
-                                    isTargetDetected = false
+                                    // Detection state is now managed by DetectionPipeline
                                 } else {
                                     maintenanceStarted = false
                                     modelPlaced = false
                                     instructionStep = 0
-                                    detectionResults = emptyList()
-                                    inferenceTimeMs = 0L
-                                    isTargetDetected = false
+                                    // Detection state is managed by DetectionPipeline lifecycle
                                     anchorNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
                                     modelNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
                                     anchorNodeRef.value = null
@@ -418,10 +507,7 @@ fun ARView(
                             if (!maintenanceStarted) {
                                 maintenanceStarted = true
                                 instructionStep = 1
-                                detectionResults = emptyList()
-                                inferenceTimeMs = 0L
-                                isTargetDetected = false
-                                isDetecting = false
+                                // Detection state is managed by DetectionPipeline lifecycle
                             }
                         },
                         enabled = !isLoadingModel && !maintenanceStarted,
