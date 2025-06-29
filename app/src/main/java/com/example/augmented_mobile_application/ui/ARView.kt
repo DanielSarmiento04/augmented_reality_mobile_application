@@ -23,9 +23,9 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
 import android.graphics.Rect
-import android.graphics.RectF // Import RectF
+import android.graphics.RectF
 import android.graphics.YuvImage
-import android.media.Image // Import Android's Image class
+import android.media.Image
 import android.os.Handler
 import android.os.HandlerThread
 import io.github.sceneview.ar.ARSceneView
@@ -54,20 +54,17 @@ import java.text.DecimalFormat
 import com.example.augmented_mobile_application.ai.YOLO11Detector
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.ResourceExhaustedException
-import java.util.concurrent.TimeUnit // Import TimeUnit if needed for interruption logic later
+import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 import kotlin.math.min
 
 private const val TAG = "ARView"
-// Define the target class ID you are interested in (e.g., 82 for 'person' in COCO, adjust as needed)
-private const val TARGET_CLASS_ID = 82 // Example: Person ID in COCO dataset
+private const val TARGET_CLASS_ID = 82
 
-// Helper composable to manage YOLO detector lifecycle
 @Composable
 fun rememberYoloDetector(context: Context): YOLO11Detector? {
-    // Define model and label paths within the 'pump' assets subfolder
-    val modelPath = "pump/pump.tflite" // Updated path
-    val labelsPath = "pump/classes.txt" // Updated path
+    val modelPath = "pump/pump.tflite"
+    val labelsPath = "pump/classes.txt"
 
     val detector = remember {
         try {
@@ -76,15 +73,15 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
                 context = context,
                 modelPath = modelPath,
                 labelsPath = labelsPath,
-                useNNAPI = true, // Prefer NNAPI
-                useGPU = true    // Use GPU as fallback or if NNAPI fails
+                useNNAPI = true,
+                useGPU = true
             ).also {
                 Log.i(TAG, "YOLO11Detector initialized successfully.")
                 Log.i(TAG, "Model Input Details: ${it.getInputDetails()}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize YOLODetector: ${e.message}", e)
-            null // Return null if initialization fails
+            null
         }
     }
 
@@ -102,7 +99,6 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
     return detector
 }
 
-
 @OptIn(ExperimentalComposeUiApi::class, ExperimentalMaterial3Api::class, androidx.camera.core.ExperimentalGetImage::class)
 @Composable
 fun ARView(
@@ -110,137 +106,112 @@ fun ARView(
     navController: NavHostController
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope() // Coroutine scope for launching detection
+    val scope = rememberCoroutineScope()
 
-    // AR Scene state management
     var trackingFailureReason by remember { mutableStateOf<TrackingFailureReason?>(null) }
     var modelPlaced by remember { mutableStateOf(false) }
     var isLoadingModel by remember { mutableStateOf(true) }
     var instructionStep by remember { mutableStateOf(0) }
-
-    // Maintenance process state
     var maintenanceStarted by remember { mutableStateOf(false) }
 
-    // Detection State
     val yoloDetector = rememberYoloDetector(context)
     var detectionResults by remember { mutableStateOf<List<YOLO11Detector.Detection>>(emptyList()) }
-    var isDetecting by remember { mutableStateOf(false) } // Throttle detection
-    var inferenceTimeMs by remember { mutableStateOf(0L) } // State for inference time
-    var isTargetDetected by remember { mutableStateOf(false) } // State for target class detection
+    var isDetecting by remember { mutableStateOf(false) }
+    var inferenceTimeMs by remember { mutableStateOf(0L) }
+    var isTargetDetected by remember { mutableStateOf(false) }
 
-    // Instructions for maintenance steps
     val instructions = listOf(
         "Escanee una superficie plana y coloque el modelo 3D",
         "Verificar que la bomba esté apagada",
-        "Inspeccionar el estado general de la bomba (Detección activa)", // Indicate detection
+        "Inspeccionar el estado general de la bomba (Detección activa)",
         "Comprobar conexiones eléctricas (Detección activa)",
         "Verificar el estado de las válvulas (Detección activa)",
         "Mantenimiento completado con éxito"
     )
 
-    // References to ARSceneView and nodes
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelNodeRef = remember { mutableStateOf<ModelNode?>(null) }
     val anchorNodeRef = remember { mutableStateOf<AnchorNode?>(null) }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // AR SceneView
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
-                // --- TAP DETECTION FOR PLACEMENT ---
                 .pointerInteropFilter { event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            // Handle model placement on tap if not already placed
-                            arSceneViewRef.value?.let { arSceneView ->
-                                val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
-                                // --- CHECK IF MODEL IS PLACED AND HIT TEST IS VALID ---
-                                if (!modelPlaced && !hitResults.isNullOrEmpty()) {
-                                    hitResults.firstOrNull()?.let { hit ->
-                                        // --- CREATE ANCHOR AT HIT POINT ---
-                                        val anchor = hit.createAnchor()
-                                        val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
-                                        // Use entity-based addition
-                                        arSceneView.scene.addEntity(anchorNode.entity)
+                            if (maintenanceStarted && !modelPlaced) {
+                                arSceneViewRef.value?.let { arSceneView ->
+                                    val hitResults = arSceneView.frame?.hitTest(event.x, event.y)
+                                    if (!hitResults.isNullOrEmpty()) {
+                                        hitResults.firstOrNull()?.let { hit ->
+                                            val anchor = hit.createAnchor()
+                                            val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
+                                            arSceneView.scene.addEntity(anchorNode.entity)
 
-                                        modelNodeRef.value?.let { modelNode ->
-                                            // --- ADD MODEL TO SCENE ---
-                                            arSceneView.scene.addEntity(modelNode.entity)
-                                            // --- POSITION MODEL AT ANCHOR ---
-                                            modelNode.transform.position = anchorNode.transform.position
+                                            modelNodeRef.value?.let { modelNode ->
+                                                arSceneView.scene.addEntity(modelNode.entity)
+                                                modelNode.transform.position = anchorNode.transform.position
 
-                                            // --- UPDATE STATE ---
-                                            modelPlaced = true
-                                            anchorNodeRef.value = anchorNode
+                                                modelPlaced = true
+                                                anchorNodeRef.value = anchorNode
+                                                instructionStep = maxOf(1, instructionStep)
+                                            }
                                         }
                                     }
                                 }
                             }
-                            false // Consume the event if handled, but false here allows other gestures potentially
+                            false
                         }
                         else -> false
                     }
                 },
             factory = { ctx ->
-                // Create ARSceneView and assign to a variable
                 val sceneView = ARSceneView(ctx).apply {
-                    arSceneViewRef.value = this // Store the reference
+                    arSceneViewRef.value = this
 
-                    // Configure AR session settings
                     configureSession { session, config ->
                         config.focusMode = Config.FocusMode.AUTO
                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE // Crucial for getting frames
+                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                         config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
                     }
 
                     planeRenderer.isEnabled = true
 
-                    // Handle AR tracking failures
                     onTrackingFailureChanged = { reason ->
                         trackingFailureReason = reason
                     }
 
-                    // Set up frame listener for DETECTION processing
-                    onFrame = { frameTime -> // frameTime is provided
+                    onFrame = { frameTime ->
                         val currentSceneView = arSceneViewRef.value
                         val currentFrame: ArFrame? = currentSceneView?.frame
 
-                        // Process frame only when needed and detector is ready
                         if (maintenanceStarted && modelPlaced && !isDetecting && yoloDetector != null && currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
                             try {
                                 currentFrame.acquireCameraImage().use { image: Image? ->
                                     if (image != null) {
-                                        isDetecting = true // Set flag
+                                        isDetecting = true
 
-                                        val bitmap: Bitmap = image.toBitmap() // Convert YUV Image to Bitmap
+                                        val bitmap: Bitmap = image.toBitmap()
 
-                                        // Launch detection in a background thread
                                         scope.launch(Dispatchers.IO) {
                                             var results: List<YOLO11Detector.Detection> = emptyList()
                                             var timeTaken: Long = 0
                                             try {
-                                                Log.d(TAG, "Starting detection...")
-                                                // Call detector and get results + time
                                                 val detectionPair = yoloDetector.detect(bitmap)
                                                 results = detectionPair.first
                                                 timeTaken = detectionPair.second
-                                                Log.d(TAG, "Detection finished: ${results.size} results in ${timeTaken}ms")
 
-                                                // Check if the target class is detected
                                                 val targetFound = results.any { it.classId == TARGET_CLASS_ID }
 
-                                                // Update state on the main thread
                                                 withContext(Dispatchers.Main) {
                                                     detectionResults = results
-                                                    inferenceTimeMs = timeTaken // Update inference time state
-                                                    isTargetDetected = targetFound // Update target detected state
+                                                    inferenceTimeMs = timeTaken
+                                                    isTargetDetected = targetFound
                                                 }
 
                                             } catch (e: Exception) {
-                                                Log.e(TAG, "Detection failed: ${e.message}", e)
-                                                // Reset state on error
                                                 withContext(Dispatchers.Main) {
                                                     detectionResults = emptyList()
                                                     inferenceTimeMs = 0L
@@ -250,85 +221,63 @@ fun ARView(
                                                 if (!bitmap.isRecycled) {
                                                     bitmap.recycle()
                                                 }
-                                                // Reset detection flag on main thread after processing
                                                 withContext(Dispatchers.Main) {
                                                     isDetecting = false
                                                 }
                                             }
                                         }
-                                    } else {
-                                        Log.w(TAG, "Acquired image is null")
                                     }
-                                } // image.close() is called automatically by use {}
-                            } catch (e: NotYetAvailableException) {
-                                Log.w(TAG, "Frame image not yet available.")
-                            } catch (e: ResourceExhaustedException) {
-                                Log.e(TAG, "ARCore ResourceExhaustedException: Too many images acquired.")
-                                isDetecting = false // Reset flag on error
-                            } catch (e: IllegalStateException) {
-                                Log.e(TAG, "IllegalStateException during image processing: ${e.message}")
-                                isDetecting = false // Reset flag on error
+                                }
                             } catch (e: Exception) {
-                                Log.e(TAG, "Error acquiring/processing frame: ${e.message}", e)
-                                isDetecting = false // Reset flag on error
+                                isDetecting = false
                             }
                         } else {
-                            // Conditions not met for detection
-                            // Optionally clear results/time if detection stops actively
                             if (detectionResults.isNotEmpty() || inferenceTimeMs != 0L || isTargetDetected) {
                                 detectionResults = emptyList()
                                 inferenceTimeMs = 0L
                                 isTargetDetected = false
                             }
-                            // Reset flag if stuck
                             if (isDetecting && (!maintenanceStarted || !modelPlaced || currentFrame?.camera?.trackingState != TrackingState.TRACKING)) {
                                 isDetecting = false
                             }
                         }
                     }
 
-                    // --- MODEL LOADING ---
                     scope.launch {
                         try {
-                            // --- LOAD THE .glb FILE ---
                             val modelNode = ModelNode(
                                 modelInstance = modelLoader.createModelInstance(
-                                    assetFileLocation = "pump/pump.glb" // Your model file
+                                    assetFileLocation = "pump/pump.glb"
                                 ),
-                                scaleToUnits = 1.0f // Adjust scale if needed
+                                scaleToUnits = 1.0f
                             ).apply {
                                 isShadowReceiver = false
                             }
-                            // --- STORE MODEL REFERENCE ---
                             modelNodeRef.value = modelNode
                             isLoadingModel = false
                         } catch (e: Exception) {
-                            Log.e(TAG, "Failed to load model: ${e.message ?: "Unknown error"}")
                             isLoadingModel = false
                         }
                     }
                 }
-                sceneView // Return the created sceneView instance
+                sceneView
             }
         )
 
-        // Detection Overlay - Pass target info if needed for highlighting
         DrawDetectionsOverlay(
             detections = detectionResults,
             detector = yoloDetector,
-            targetClassId = TARGET_CLASS_ID, // Pass target ID
-            isTargetDetected = isTargetDetected, // Pass detection status
+            targetClassId = TARGET_CLASS_ID,
+            isTargetDetected = isTargetDetected,
             modifier = Modifier.fillMaxSize()
         )
 
-        // UI Overlay for instructions and buttons
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top information card
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -350,9 +299,8 @@ fun ARView(
                         fontSize = 16.sp,
                         color = Color.Black
                     )
-                    Spacer(modifier = Modifier.height(4.dp)) // Add spacer
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                    // Display Inference Time and Target Status
                     if (maintenanceStarted && modelPlaced) {
                         Text(
                             text = "Inference Time: ${inferenceTimeMs}ms",
@@ -392,7 +340,6 @@ fun ARView(
                 }
             }
 
-            // Bottom control buttons and maintenance navigation
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -400,34 +347,6 @@ fun ARView(
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 if (modelPlaced) {
-                    // "Iniciar Mantenimiento" button
-                    Button(
-                        onClick = {
-                            maintenanceStarted = true
-                            instructionStep = 1
-                            // Reset detection state when starting
-                            detectionResults = emptyList()
-                            inferenceTimeMs = 0L
-                            isTargetDetected = false
-                            isDetecting = false
-                        },
-                        enabled = modelPlaced && !maintenanceStarted,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = DarkGreen,
-                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth(0.8f)
-                            .padding(vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = "Iniciar Mantenimiento",
-                            color = Color.White,
-                            fontSize = 16.sp
-                        )
-                    }
-
-                    // Navigation buttons for maintenance steps
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -436,7 +355,6 @@ fun ARView(
                             onClick = {
                                 if (instructionStep > 1) {
                                     instructionStep--
-                                    // Clear state on step change
                                     detectionResults = emptyList()
                                     inferenceTimeMs = 0L
                                     isTargetDetected = false
@@ -455,16 +373,19 @@ fun ARView(
                             onClick = {
                                 if (instructionStep < instructions.size - 1) {
                                     instructionStep++
-                                    // Clear state on step change
                                     detectionResults = emptyList()
                                     inferenceTimeMs = 0L
                                     isTargetDetected = false
                                 } else {
-                                    // Complete maintenance procedure
-                                    maintenanceStarted = false // Stop frame processing
+                                    maintenanceStarted = false
+                                    modelPlaced = false
+                                    instructionStep = 0
                                     detectionResults = emptyList()
                                     inferenceTimeMs = 0L
                                     isTargetDetected = false
+                                    anchorNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
+                                    modelNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
+                                    anchorNodeRef.value = null
                                     navController.navigateUp()
                                 }
                             },
@@ -478,14 +399,46 @@ fun ARView(
                         }
                     }
                 } else {
-                    // Prompt message when no model is yet placed
                     Text(
-                        text = "Mueva la cámara para detectar superficies planas y toque para colocar el modelo",
+                        text = when {
+                            isLoadingModel -> "Cargando modelo..."
+                            !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para habilitar la colocación del modelo"
+                            else -> "Mueva la cámara para detectar superficies planas y toque para colocar el modelo"
+                        },
                         color = Color.White,
                         modifier = Modifier
                             .background(Color.Black.copy(alpha = 0.7f))
                             .padding(8.dp)
+                            .align(Alignment.CenterHorizontally)
                     )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            if (!maintenanceStarted) {
+                                maintenanceStarted = true
+                                instructionStep = 1
+                                detectionResults = emptyList()
+                                inferenceTimeMs = 0L
+                                isTargetDetected = false
+                                isDetecting = false
+                            }
+                        },
+                        enabled = !isLoadingModel && !maintenanceStarted,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = DarkGreen,
+                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth(0.8f)
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = "Iniciar Mantenimiento",
+                            color = Color.White,
+                            fontSize = 16.sp
+                        )
+                    }
                 }
             }
         }
@@ -496,29 +449,27 @@ fun ARView(
 @Composable
 fun DrawDetectionsOverlay(
     detections: List<YOLO11Detector.Detection>,
-    detector: YOLO11Detector?, // Needed for class names
-    targetClassId: Int,        // ID of the target class to highlight
-    isTargetDetected: Boolean, // Whether the target is currently detected
+    detector: YOLO11Detector?,
+    targetClassId: Int,
+    isTargetDetected: Boolean,
     modifier: Modifier = Modifier
 ) {
-    // Use remember for paints to avoid recreating them on every recomposition
     val boxPaint = remember {
         android.graphics.Paint().apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 5f // Adjust thickness
-            // Default color set per detection below
+            strokeWidth = 5f
         }
     }
-    val targetBoxPaint = remember { // Specific paint for the target
+    val targetBoxPaint = remember {
         android.graphics.Paint().apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 8f // Thicker border for target
-            color = android.graphics.Color.GREEN // Highlight color for target
+            strokeWidth = 8f
+            color = android.graphics.Color.GREEN
         }
     }
     val textPaint = remember {
         android.graphics.Paint().apply {
-            textSize = 40f // Adjust text size
+            textSize = 40f
             color = android.graphics.Color.WHITE
             isAntiAlias = true
         }
@@ -526,81 +477,67 @@ fun DrawDetectionsOverlay(
     val textBackgroundPaint = remember {
         android.graphics.Paint().apply {
             style = android.graphics.Paint.Style.FILL
-            // Default color set per detection below
         }
     }
-    val targetTextBackgroundPaint = remember { // Specific background for target label
+    val targetTextBackgroundPaint = remember {
         android.graphics.Paint().apply {
             style = android.graphics.Paint.Style.FILL
-            color = android.graphics.Color.GREEN // Highlight color for target label bg
+            color = android.graphics.Color.GREEN
         }
     }
 
-    // Use Compose Canvas for drawing
     Canvas(modifier = modifier) {
         drawIntoCanvas { canvas ->
             detections.forEach { detection ->
                 val className = detector?.getClassName(detection.classId) ?: "ID: ${detection.classId}"
                 val label = "$className: ${"%.2f".format(detection.conf)}"
 
-                // Determine if this is the target class
                 val isTarget = detection.classId == targetClassId
 
-                // Select appropriate paints based on whether it's the target
                 val currentBoxPaint = if (isTarget) targetBoxPaint else boxPaint
                 val currentTextBgPaint = if (isTarget) targetTextBackgroundPaint else textBackgroundPaint
 
-                // Set colors for non-target detections
                 if (!isTarget) {
                     val color = detector?.classColors?.getOrNull(detection.classId % (detector.classColors.size ?: 1)) ?: intArrayOf(255, 0, 0)
                     val androidColor = android.graphics.Color.rgb(color[0], color[1], color[2])
                     currentBoxPaint.color = androidColor
                     currentTextBgPaint.color = androidColor
                 } else {
-                    // Ensure target paints have the correct highlight color (already set, but safe)
                     targetBoxPaint.color = android.graphics.Color.GREEN
                     targetTextBackgroundPaint.color = android.graphics.Color.GREEN
                 }
 
-                // Draw bounding box using nativeCanvas
                 canvas.nativeCanvas.drawRect(
                     detection.box.x.toFloat(),
                     detection.box.y.toFloat(),
                     (detection.box.x + detection.box.width).toFloat(),
                     (detection.box.y + detection.box.height).toFloat(),
-                    currentBoxPaint // Use selected paint
+                    currentBoxPaint
                 )
 
-                // Draw label text with background using nativeCanvas
                 val textBounds = android.graphics.Rect()
                 textPaint.getTextBounds(label, 0, label.length, textBounds)
                 val textWidth = textBounds.width()
                 val textHeight = textBounds.height()
 
-                // Calculate background position (slightly above the box)
                 val textBgLeft = detection.box.x.toFloat()
-                val textBgTop = detection.box.y.toFloat() - textHeight - 10f // Position above box
+                val textBgTop = detection.box.y.toFloat() - textHeight - 10f
                 val textBgRight = detection.box.x.toFloat() + textWidth + 10f
                 val textBgBottom = detection.box.y.toFloat()
 
-                // Ensure background doesn't go off-screen top
                 val clampedTextBgTop = maxOf(0f, textBgTop)
-                // Ensure min height, adjust based on actual text height
-                val clampedTextBgBottom = clampedTextBgTop + textHeight + 10f // Relative to clamped top
+                val clampedTextBgBottom = clampedTextBgTop + textHeight + 10f
 
-                // Draw background rectangle
                 canvas.nativeCanvas.drawRect(
                     textBgLeft, clampedTextBgTop, textBgRight, clampedTextBgBottom,
-                    currentTextBgPaint // Use selected paint
+                    currentTextBgPaint
                 )
 
-                // Draw text (adjust Y position based on clamped background)
-                // Position text inside the background box, vertically centered roughly
-                val textY = clampedTextBgTop + textHeight + 5f - (textPaint.descent() / 2) // Adjust for text baseline
+                val textY = clampedTextBgTop + textHeight + 5f - (textPaint.descent() / 2)
                 canvas.nativeCanvas.drawText(
                     label,
-                    detection.box.x.toFloat() + 5f, // Padding
-                    textY, // Use calculated Y
+                    detection.box.x.toFloat() + 5f,
+                    textY,
                     textPaint
                 )
             }
@@ -608,8 +545,6 @@ fun DrawDetectionsOverlay(
     }
 }
 
-// Helper function to convert ARCore Image (YUV_420_888) to Bitmap
-// More robust implementation handling strides and buffer positions.
 fun Image.toBitmap(): Bitmap {
     if (format != ImageFormat.YUV_420_888) {
         throw IllegalArgumentException("Invalid image format, expected YUV_420_888, got $format")
@@ -622,149 +557,109 @@ fun Image.toBitmap(): Bitmap {
     val uPlane = planes[1]
     val vPlane = planes[2]
 
-    val yBuffer = yPlane.buffer.apply { rewind() } // Ensure buffer is rewound
-    val uBuffer = uPlane.buffer.apply { rewind() } // Ensure buffer is rewound
-    val vBuffer = vPlane.buffer.apply { rewind() } // Ensure buffer is rewound
+    val yBuffer = yPlane.buffer.apply { rewind() }
+    val uBuffer = uPlane.buffer.apply { rewind() }
+    val vBuffer = vPlane.buffer.apply { rewind() }
 
     val yRowStride = yPlane.rowStride
     val uRowStride = uPlane.rowStride
     val vRowStride = vPlane.rowStride
-    val uPixelStride = uPlane.pixelStride // Stride between consecutive U samples
-    val vPixelStride = vPlane.pixelStride // Stride between consecutive V samples
-    val yPixelStride = yPlane.pixelStride // Correctly get pixel stride for Y plane
+    val uPixelStride = uPlane.pixelStride
+    val vPixelStride = vPlane.pixelStride
+    val yPixelStride = yPlane.pixelStride
 
-    // Calculate the expected size for NV21 format: Y plane + VU plane (interleaved)
     val nv21Size = width * height + ceil(height / 2.0).toInt() * ceil(width / 2.0).toInt() * 2
     val nv21 = ByteArray(nv21Size)
 
-    // 1. Copy Y Plane
     var yOffset = 0
-    if (yPixelStride == 1 && yRowStride == width) { // Use corrected yPixelStride
-        // If stride matches width and pixel stride is 1, copy directly
+    if (yPixelStride == 1 && yRowStride == width) {
         yBuffer.get(nv21, 0, width * height)
         yOffset = width * height
     } else {
-        // If stride doesn't match width (e.g., padding) or pixel stride > 1, copy row by row
         val yRowData = ByteArray(yRowStride)
         for (row in 0 until height) {
-            yBuffer.position(row * yRowStride) // Go to the start of the current row in the buffer
-            // Check remaining bytes before reading the row
-            // Use yPixelStride here
+            yBuffer.position(row * yRowStride)
             if (yBuffer.remaining() < width * yPixelStride) {
-                 Log.e(TAG, "Insufficient data in Y buffer for row $row. Remaining: ${yBuffer.remaining()}, Need: ${width * yPixelStride}")
-                 // Handle error: maybe fill remaining nv21 with default or throw?
-                 nv21.fill(128.toByte(), yOffset, nv21Size) // Fill remaining with gray
-                 yOffset = nv21Size // Mark as filled
-                 break
+                nv21.fill(128.toByte(), yOffset, nv21Size)
+                yOffset = nv21Size
+                break
             }
-            // Read the row data considering pixel stride
-            if (yPixelStride == 1) { // Use corrected yPixelStride
+            if (yPixelStride == 1) {
                 yBuffer.get(nv21, yOffset, width)
             } else {
-                // Handle pixel stride > 1 if necessary (less common for Y)
-                // Use yPixelStride here
                 yBuffer.get(yRowData, 0, width * yPixelStride)
                 for (col in 0 until width) {
-                    // Use yPixelStride here
                     nv21[yOffset + col] = yRowData[col * yPixelStride]
                 }
             }
             yOffset += width
         }
     }
-    // yOffset should now be exactly width * height if no error occurred
 
-    // 2. Copy VU Planes (interleaved VUVUVU... for NV21)
-    // UV plane dimensions (use ceil for odd dimensions)
     val uvWidth = ceil(width / 2.0).toInt()
     val uvHeight = ceil(height / 2.0).toInt()
 
-    // Temporary buffers to hold one row of U and V data
     val uRowBytes = ByteArray(uRowStride)
     val vRowBytes = ByteArray(vRowStride)
 
-    // Iterate through UV rows (half the height)
     for (row in 0 until uvHeight) {
         val vRowPos = row * vRowStride
         val uRowPos = row * uRowStride
 
-        // Ensure we don't read past buffer limits
         if (vRowPos >= vBuffer.capacity() || uRowPos >= uBuffer.capacity()) {
-            Log.w(TAG, "Calculated row position exceeds buffer capacity for UV row $row.")
-            break // Stop processing UV data
+            break
         }
 
         vBuffer.position(vRowPos)
         uBuffer.position(uRowPos)
 
-        // Determine actual number of bytes to read for this row (might be less than stride at the end)
         val vBytesToRead = min(vRowStride, vBuffer.remaining())
         val uBytesToRead = min(uRowStride, uBuffer.remaining())
 
-        // Read the available V row data
         if (vBytesToRead > 0) {
             vBuffer.get(vRowBytes, 0, vBytesToRead)
-            // Fill remaining part of buffer if read less than expected stride (e.g., last row)
             if (vBytesToRead < vRowStride) vRowBytes.fill(0, vBytesToRead, vRowStride)
         } else {
-            Log.w(TAG, "No remaining data in V buffer for row $row.")
-            vRowBytes.fill(0) // Fill with zeros if no data
+            vRowBytes.fill(0)
         }
 
-        // Read the available U row data
         if (uBytesToRead > 0) {
             uBuffer.get(uRowBytes, 0, uBytesToRead)
             if (uBytesToRead < uRowStride) uRowBytes.fill(0, uBytesToRead, uRowStride)
         } else {
-            Log.w(TAG, "No remaining data in U buffer for row $row.")
-            uRowBytes.fill(0) // Fill with zeros if no data
+            uRowBytes.fill(0)
         }
 
-
-        // Interleave V and U bytes from the row buffers into nv21
         for (col in 0 until uvWidth) {
             val vIndex = col * vPixelStride
             val uIndex = col * uPixelStride
 
-            // Check bounds for row byte arrays
             if (vIndex >= vRowStride || uIndex >= uRowStride) {
-                Log.w(TAG, "Pixel index out of bounds for row $row, col $col. vIdx=$vIndex, uIdx=$uIndex (Strides: v=$vRowStride, u=$uRowStride)")
-                // Put default gray values if out of bounds
-                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // V
-                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte() // U
-                continue // Skip to next column
+                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte()
+                if (yOffset < nv21Size) nv21[yOffset++] = 128.toByte()
+                continue
             }
 
-            // Check bounds for nv21 array
             if (yOffset + 1 < nv21Size) {
-                nv21[yOffset++] = vRowBytes[vIndex] // V byte
-                nv21[yOffset++] = uRowBytes[uIndex] // U byte
+                nv21[yOffset++] = vRowBytes[vIndex]
+                nv21[yOffset++] = uRowBytes[uIndex]
             } else {
-                // Stop if nv21 buffer is full
-                Log.w(TAG, "NV21 buffer overflow detected at row $row, col $col")
-                break // Stop filling this row
+                break
             }
         }
-         if (yOffset >= nv21Size) break // Stop if nv21 is full
+        if (yOffset >= nv21Size) break
     }
 
-    // Handle cases where nv21 might not be fully populated due to errors/early exits
     if (yOffset < nv21Size) {
-        Log.w(TAG, "NV21 buffer not fully populated ($yOffset / $nv21Size). Filling remaining with gray.")
         nv21.fill(128.toByte(), yOffset, nv21Size)
     }
 
-
-    // 3. Convert NV21 byte array to YuvImage
     val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
 
-    // 4. Convert YuvImage to JPEG stream
     val out = ByteArrayOutputStream()
-    // Use a reasonable quality; 90 is often good.
     yuvImage.compressToJpeg(Rect(0, 0, width, height), 90, out)
 
-    // 5. Decode JPEG stream to Bitmap
     val imageBytes = out.toByteArray()
     return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-        ?: throw RuntimeException("BitmapFactory.decodeByteArray returned null") // Handle potential decode failure
+        ?: throw RuntimeException("BitmapFactory.decodeByteArray returned null")
 }
