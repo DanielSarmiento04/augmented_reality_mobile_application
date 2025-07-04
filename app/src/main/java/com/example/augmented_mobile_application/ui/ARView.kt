@@ -73,6 +73,16 @@ import com.google.ar.core.exceptions.ResourceExhaustedException
 import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 import kotlin.math.min
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import com.example.augmented_mobile_application.BuildConfig
+import com.google.ar.core.ArCoreApk
 
 private const val TAG = "ARView"
 private const val TARGET_CLASS_ID = 41  // Changed from 82 to 41 (cup) as requested
@@ -154,6 +164,100 @@ fun ARView(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    
+    // ARCore availability state
+    var arCoreAvailability by remember { mutableStateOf<ArCoreApk.Availability?>(null) }
+    
+    // Check ARCore availability
+    LaunchedEffect(Unit) {
+        arCoreAvailability = ArCoreApk.getInstance().checkAvailability(context)
+        Log.i(TAG, "ARCore availability: $arCoreAvailability")
+    }
+    
+    // Camera permission state
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context, 
+                Manifest.permission.CAMERA
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+    
+    // Camera permission launcher
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasCameraPermission = isGranted
+        if (isGranted) {
+            Log.i(TAG, "Camera permission granted")
+        } else {
+            Log.w(TAG, "Camera permission denied")
+        }
+    }
+    
+    // Request camera permission if not granted
+    LaunchedEffect(Unit) {
+        if (!hasCameraPermission) {
+            Log.i(TAG, "Requesting camera permission")
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        } else {
+            // Check ARCore availability when permission is granted
+            Log.i(TAG, "Camera permission already granted, checking ARCore availability")
+            val availability = ArCoreApk.getInstance().checkAvailability(context)
+            Log.i(TAG, "ARCore availability: $availability")
+            
+            if (availability.isTransient) {
+                Log.i(TAG, "ARCore availability is transient, will check again later")
+            }
+        }
+    }
+    
+    // Show permission request screen if camera permission is not granted
+    if (!hasCameraPermission) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                modifier = Modifier.padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Icons.Default.CameraAlt,
+                        contentDescription = "Camera",
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Permiso de Cámara Requerido",
+                        style = MaterialTheme.typography.headlineSmall,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Esta aplicación necesita acceso a la cámara para funcionar con realidad aumentada.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    ) {
+                        Text("Conceder Permiso")
+                    }
+                }
+            }
+        }
+        return
+    }
 
     // Enhanced state management for better surface detection feedback
     var isLoadingModel by remember { mutableStateOf(true) }
@@ -372,10 +476,13 @@ fun ARView(
                     }
                 },
             factory = { ctx ->
+                Log.i(TAG, "Creating ARSceneView...")
                 val sceneView = ARSceneView(ctx).apply {
                     arSceneViewRef.value = this
+                    Log.i(TAG, "ARSceneView created successfully")
 
                     configureSession { session, config ->
+                        Log.i(TAG, "Configuring ARCore session...")
                         // Enhanced ARCore configuration for optimal surface detection
                         config.focusMode = Config.FocusMode.AUTO
                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
@@ -413,11 +520,22 @@ fun ARView(
 
                     onTrackingFailureChanged = { reason ->
                         // This is handled by arStateManager now
+                        Log.d(TAG, "Tracking failure changed: $reason")
                     }
 
                     onFrame = { frameTime ->
                         val currentSceneView = arSceneViewRef.value
                         val currentFrame: ArFrame? = currentSceneView?.frame
+
+                        // Debug: Log frame availability
+                        if (currentFrame != null) {
+                            // Only log every 60 frames to avoid spam
+                            if (frameTime % 60 == 0L) {
+                                Log.d(TAG, "Frame received - Camera tracking state: ${currentFrame.camera.trackingState}")
+                            }
+                        } else {
+                            Log.w(TAG, "No frame available from ARSceneView")
+                        }
 
                         // Update ARCore state manager with current frame
                         arStateManager.updateTrackingState(currentFrame)
@@ -457,7 +575,12 @@ fun ARView(
                         }
                     }
                 }
+                Log.i(TAG, "Returning ARSceneView from factory")
                 sceneView
+            },
+            update = { sceneView ->
+                Log.d(TAG, "ARSceneView update called")
+                // The sceneView is ready for use
             }
         )
 
@@ -516,6 +639,55 @@ fun ARView(
                             isPlacementReady = isPlacementReady,
                             detectionQuality = surfaceDetectionManager.getDetectionQuality()
                         )
+                    }
+                    
+                    // Debug status card
+                    if (BuildConfig.DEBUG) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color.Black.copy(alpha = 0.7f)
+                            )
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(8.dp)
+                            ) {
+                                Text(
+                                    text = "Debug Info:",
+                                    fontSize = 12.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Tracking: ${trackingState.name}",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Camera Permission: $hasCameraPermission",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "ARSceneView: ${if (arSceneViewRef.value != null) "Created" else "Not Created"}",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "ARCore: ${arCoreAvailability?.name ?: "Checking..."}",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
+                                trackingFailureReason?.let {
+                                    Text(
+                                        text = "Failure: ${it.name}",
+                                        fontSize = 10.sp,
+                                        color = Color.Red
+                                    )
+                                }
+                            }
+                        }
                     }
                     
                     Spacer(modifier = Modifier.height(4.dp))
