@@ -1,0 +1,25 @@
+package com.example.augmented_mobile_application.viewmodel
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfDocument
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
+import android.util.Log
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.augmented_mobile_application.core.ResourceAdministrator
+import com.example.augmented_mobile_application.core.ResourcePool
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap

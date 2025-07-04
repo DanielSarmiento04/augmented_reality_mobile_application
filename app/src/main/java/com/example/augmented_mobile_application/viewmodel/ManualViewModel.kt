@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.augmented_mobile_application.core.ResourceAdministrator
+import com.example.augmented_mobile_application.core.ResourcePool
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -42,15 +44,64 @@ class ManualViewModel : ViewModel() {
     private val _pageCount = MutableStateFlow(0)
     val pageCount = _pageCount.asStateFlow()
 
-    // Cache for rendered pages
+    // Cache for rendered pages with resource management
     private val pageCache = ConcurrentHashMap<Int, Bitmap>()
+    
+    // Resource management
+    private var resourceAdmin: ResourceAdministrator? = null
+    private var bitmapPool: ResourcePool<Bitmap>? = null
+    private var resourceHandle: ManagedResourceHandle<ManualViewModel>? = null
     
     // PDF document resources
     private var currentRenderer: PdfRenderer? = null
     private var currentFileDescriptor: ParcelFileDescriptor? = null
     private var tempFile: File? = null
 
+    private fun initializeResourceManagement(context: Context) {
+        if (resourceAdmin == null) {
+            resourceAdmin = ResourceAdministrator.getInstance(context)
+            
+            // Register this ViewModel for resource management
+            resourceHandle = resourceAdmin?.registerResource(
+                resourceId = "manual_viewmodel_${hashCode()}",
+                resource = this,
+                priority = ResourceAdministrator.ResourcePriority.NORMAL,
+                onCleanup = { clearResources() }
+            )
+            
+            // Create bitmap pool for efficient bitmap reuse
+            bitmapPool = resourceAdmin?.getResourcePool(
+                poolName = "pdf_bitmaps",
+                maxSize = MAX_CACHE_SIZE * 2,
+                factory = { 
+                    Bitmap.createBitmap(1024, 1024, Bitmap.Config.ARGB_8888)
+                },
+                reset = { bitmap ->
+                    bitmap.eraseColor(Color.WHITE)
+                },
+                dispose = { bitmap ->
+                    if (!bitmap.isRecycled) {
+                        bitmap.recycle()
+                    }
+                }
+            )
+            
+            // Register memory watcher for PDF operations
+            resourceAdmin?.registerMemoryWatcher(
+                watcherName = "pdf_memory_watcher",
+                thresholdMB = 100, // Alert if PDF operations use more than 100MB
+                onThresholdExceeded = {
+                    Log.w(TAG, "PDF memory usage high - cleaning cache")
+                    clearCache()
+                }
+            )
+        }
+    }
+
     fun displayPdf(context: Context, pdfName: String) {
+        // Initialize resource management on first use
+        initializeResourceManagement(context)
+        
         _isLoading.value = true
         _errorMessage.value = null
         _manualState.value = ManualState.Loading

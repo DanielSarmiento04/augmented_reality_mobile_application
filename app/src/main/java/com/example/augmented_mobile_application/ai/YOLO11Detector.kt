@@ -9,6 +9,7 @@ import android.graphics.RectF
 import android.os.Build
 import android.os.SystemClock
 import android.util.Log
+import com.example.augmented_mobile_application.core.ResourceAdministrator
 import org.opencv.android.Utils
 import org.opencv.core.*
 import org.opencv.imgproc.Imgproc
@@ -95,6 +96,27 @@ class YOLO11Detector(
     private var inputBuffer: ByteBuffer? = null
     private var outputBuffer: ByteBuffer? = null
     private val outputResults = HashMap<Int, Any>()
+
+    // Performance monitoring and resource management
+    private val resourceAdmin = ResourceAdministrator.getInstance(context)
+    private val resourceHandle = resourceAdmin.registerResource(
+        resourceId = "yolo_detector_${hashCode()}",
+        resource = this,
+        priority = ResourceAdministrator.ResourcePriority.CRITICAL,
+        onCleanup = { cleanupResources() }
+    )
+
+    // Memory watcher for large model memory usage
+    init {
+        resourceAdmin.registerMemoryWatcher(
+            watcherName = "yolo_detector_memory",
+            thresholdMB = 200, // Alert if YOLO uses more than 200MB
+            onThresholdExceeded = {
+                Log.w(TAG, "YOLO detector memory usage high - consider cleanup")
+                optimizeMemoryUsage()
+            }
+        )
+    }
 
     init {
         try {
@@ -1098,45 +1120,29 @@ class YOLO11Detector(
         outputBuffer = null
         gpuDelegate = null
         nnApiDelegate = null
+        
+        // Cleanup resource administrator registration
+        resourceHandle?.close()
     }
 
     /**
-     * Data classes for detections and bounding boxes
+     * Optimize memory usage during high pressure situations
      */
-    data class BoundingBox(val x: Int, val y: Int, val width: Int, val height: Int)
-
-    data class Detection(val box: BoundingBox, val conf: Float, val classId: Int)
-
-    /**
-     * Helper functions
-     */
-
-    /**
-     * Clamp a value between min and max
-     */
-    private fun clamp(value: Float, min: Float, max: Float): Float {
-        return when {
-            value < min -> min
-            value > max -> max
-            else -> value
+    private fun optimizeMemoryUsage() {
+        try {
+            // Force garbage collection of OpenCV mats
+            resizedImageMat.release()
+            rgbMat.release()
+            
+            // Recreate with minimal size
+            resizedImageMat.create(inputHeight, inputWidth, CvType.CV_8UC3)
+            rgbMat.create(inputHeight, inputWidth, CvType.CV_8UC3)
+            
+            // Clear output buffer to reduce memory footprint
+            outputBuffer?.clear()
+            
+            Log.i(TAG, "Memory optimization completed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during memory optimization", e)
         }
     }
-
-    /**
-     * Debug print function with enhanced logging
-     */
-    private fun debug(message: String) {
-        if (BuildConfig.DEBUG) {
-            Log.d(TAG, message)
-        }
-    }
-
-    // Add ScopedTimer implementation (if missing)
-    private class ScopedTimer(private val name: String) {
-        private val startTime = SystemClock.elapsedRealtime()
-
-        fun stop() {
-            val endTime = SystemClock.elapsedRealtime()
-        }
-    }
-}
