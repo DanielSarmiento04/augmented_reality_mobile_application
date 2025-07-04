@@ -57,12 +57,30 @@ class DetectionPipeline(
         }
         
         detectionJob?.cancel()
-        detectionJob = processingScope.launch {
+        // Cancel any ongoing detection to prevent queue buildup
+        detectionJob?.cancel()
+        
+        detectionJob = processingScope.launch(Dispatchers.Default) {
             try {
                 _isProcessing.value = true
                 
-                // Run detection
-                val (detections, inferenceTime) = detector.detect(bitmap)
+                // Additional safety check before detection
+                if (isDisposed) {
+                    Log.d(TAG, "Pipeline disposed, skipping detection")
+                    return@launch
+                }
+                
+                // Run detection with timeout
+                val detectionResult = withTimeoutOrNull(2000L) { // 2 second timeout
+                    detector.detect(bitmap)
+                }
+                
+                if (detectionResult == null) {
+                    Log.w(TAG, "Detection timed out, skipping frame")
+                    return@launch
+                }
+                
+                val (detections, inferenceTime) = detectionResult
                 
                 // Filter for target class and high confidence
                 val filteredDetections = detections.filter { detection ->
@@ -71,11 +89,13 @@ class DetectionPipeline(
                 
                 val hasTargetDetection = filteredDetections.isNotEmpty()
                 
-                // Update UI state on main dispatcher
+                // Update UI state on main dispatcher - use immediate to avoid delays
                 withContext(Dispatchers.Main.immediate) {
-                    _detectionResults.value = detections
-                    _isTargetDetected.value = hasTargetDetection
-                    _inferenceTimeMs.value = inferenceTime
+                    if (!isDisposed) { // Double-check before updating UI
+                        _detectionResults.value = detections
+                        _isTargetDetected.value = hasTargetDetection
+                        _inferenceTimeMs.value = inferenceTime
+                    }
                 }
                 
                 lastDetectionTime = currentTime
@@ -84,11 +104,16 @@ class DetectionPipeline(
                     Log.d(TAG, "Target class $targetClassId detected with ${filteredDetections.size} instances")
                 }
                 
+            } catch (e: CancellationException) {
+                // Expected when job is cancelled, don't log as error
+                Log.d(TAG, "Detection cancelled")
             } catch (e: Exception) {
                 Log.e(TAG, "Detection failed: ${e.message}", e)
                 withContext(Dispatchers.Main.immediate) {
-                    _detectionResults.value = emptyList()
-                    _isTargetDetected.value = false
+                    if (!isDisposed) {
+                        _detectionResults.value = emptyList()
+                        _isTargetDetected.value = false
+                    }
                 }
             } finally {
                 _isProcessing.value = false

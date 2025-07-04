@@ -83,6 +83,9 @@ import android.content.pm.PackageManager
 import androidx.core.content.ContextCompat
 import com.example.augmented_mobile_application.BuildConfig
 import com.google.ar.core.ArCoreApk
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import androidx.compose.runtime.derivedStateOf
 
 private const val TAG = "ARView"
 private const val TARGET_CLASS_ID = 41  // Changed from 82 to 41 (cup) as requested
@@ -168,10 +171,45 @@ fun ARView(
     // ARCore availability state
     var arCoreAvailability by remember { mutableStateOf<ArCoreApk.Availability?>(null) }
     
+    // Memory pressure monitoring
+    var isMemoryPressureHigh by remember { mutableStateOf(false) }
+    
     // Check ARCore availability
     LaunchedEffect(Unit) {
         arCoreAvailability = ArCoreApk.getInstance().checkAvailability(context)
         Log.i(TAG, "ARCore availability: $arCoreAvailability")
+    }
+    
+    // Monitor memory pressure - less frequent to avoid recomposition issues
+    LaunchedEffect(Unit) {
+        while (true) {
+            try {
+                val runtime = Runtime.getRuntime()
+                val maxMemory = runtime.maxMemory()
+                val usedMemory = runtime.totalMemory() - runtime.freeMemory()
+                val memoryUsagePercent = (usedMemory.toFloat() / maxMemory.toFloat()) * 100
+                
+                // Use higher threshold and only change state when crossing boundaries
+                val wasHighPressure = isMemoryPressureHigh
+                isMemoryPressureHigh = memoryUsagePercent > 85 // Higher threshold
+                
+                // Only log when state changes to reduce log spam
+                if (isMemoryPressureHigh != wasHighPressure) {
+                    if (isMemoryPressureHigh) {
+                        Log.w(TAG, "High memory pressure detected: ${memoryUsagePercent.toInt()}%")
+                        // Trigger garbage collection to free memory
+                        System.gc()
+                    } else {
+                        Log.i(TAG, "Memory pressure normalized: ${memoryUsagePercent.toInt()}%")
+                    }
+                }
+                
+                kotlinx.coroutines.delay(10000) // Check every 10 seconds to reduce state changes
+            } catch (e: Exception) {
+                Log.e(TAG, "Error monitoring memory pressure: ${e.message}")
+                kotlinx.coroutines.delay(15000) // Wait longer on error
+            }
+        }
     }
     
     // Camera permission state
@@ -360,11 +398,33 @@ fun ARView(
         }
     }
 
-    // Manage detection pipeline lifecycle
-    LaunchedEffect(maintenanceStarted, modelPlaced) {
-        if (maintenanceStarted && modelPlaced && detectionPipeline != null) {
+    // Add stability by using derivedStateOf for computed values
+    val isArReadyForOperations by remember {
+        derivedStateOf {
+            arCoreAvailability == ArCoreApk.Availability.SUPPORTED_INSTALLED &&
+            hasCameraPermission &&
+            trackingState == TrackingState.TRACKING
+        }
+    }
+
+    // Add a flag to prevent initialization races
+    var isInitializationComplete by remember { mutableStateOf(false) }
+    
+    // Delayed initialization to prevent ANR during startup
+    LaunchedEffect(isArReadyForOperations) {
+        if (isArReadyForOperations && !isInitializationComplete) {
+            // Add a small delay to let the UI settle
+            kotlinx.coroutines.delay(500)
+            isInitializationComplete = true
+            Log.i(TAG, "AR initialization complete")
+        }
+    }
+
+    // Optimize detection pipeline start to prevent ANR
+    LaunchedEffect(isArReadyForOperations, maintenanceStarted, modelPlaced, isInitializationComplete) {
+        if (isArReadyForOperations && maintenanceStarted && modelPlaced && isInitializationComplete) {
             Log.i(TAG, "Starting detection pipeline")
-            detectionPipeline.start()
+            detectionPipeline?.start()
         } else {
             Log.i(TAG, "Stopping detection pipeline")
             detectionPipeline?.stop()
@@ -379,10 +439,10 @@ fun ARView(
         }
     }
 
-    // Cleanup ARSceneView on dispose to prevent Filament double-free errors
-    DisposableEffect(arSceneViewRef.value) {
+    // Cleanup ARSceneView only when the composable is disposed (use Unit as key)
+    DisposableEffect(Unit) {
         onDispose {
-            Log.i(TAG, "Disposing ARSceneView")
+            Log.i(TAG, "Disposing ARSceneView on composable disposal")
             try {
                 arSceneViewRef.value?.destroy()
                 arSceneViewRef.value = null
@@ -394,7 +454,123 @@ fun ARView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // Stable AndroidView with minimal recomposition triggers
         AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                Log.i(TAG, "Creating ARSceneView...")
+                val sceneView = ARSceneView(ctx).apply {
+                    Log.i(TAG, "ARSceneView created successfully")
+
+                    configureSession { session, config ->
+                        Log.i(TAG, "Configuring ARCore session...")
+                        // Enhanced ARCore configuration for optimal surface detection
+                        config.focusMode = Config.FocusMode.AUTO
+                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                        config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+                        
+                        // Enable depth for better occlusion and tracking
+                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
+                            config.depthMode = Config.DepthMode.AUTOMATIC
+                            Log.i(TAG, "Depth mode enabled for better tracking")
+                        } else {
+                            Log.w(TAG, "Depth mode not supported on this device")
+                        }
+                        
+                        // Enable instant placement for faster model placement
+                        try {
+                            config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
+                            Log.i(TAG, "Instant placement mode enabled")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Instant placement not supported: ${e.message}")
+                        }
+                        
+                        Log.i(TAG, "ARCore session configured with optimized settings")
+                        arStateManager.logSessionCapabilities(session)
+                    }
+
+                    // Enhanced plane visualization for better user feedback
+                    planeRenderer.isEnabled = true
+                    try {
+                        // Some plane renderer properties may not be available in all versions
+                        Log.i(TAG, "Plane renderer enabled with enhanced settings")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not configure plane renderer material: ${e.message}")
+                    }
+
+                    onTrackingFailureChanged = { reason ->
+                        // This is handled by arStateManager now
+                        Log.d(TAG, "Tracking failure changed: $reason")
+                    }
+
+                    var frameCounter = 0L
+                    var lastProcessedFrame = 0L
+                    onFrame = { frameTime ->
+                        frameCounter++
+                        val currentFrame: ArFrame? = this.frame
+
+                        // Update ARCore state manager with current frame
+                        arStateManager.updateTrackingState(currentFrame)
+
+                        // Update surface detection with current frame
+                        if (currentFrame != null && trackingState == TrackingState.TRACKING) {
+                            surfaceDetectionManager.updatePlanes(currentFrame)
+                        }
+
+                        // More aggressive frame limiting to prevent ANR
+                        // Only process every 10th frame (~3 FPS) and add minimum time gap
+                        val currentTime = System.currentTimeMillis()
+                        if (maintenanceStarted && modelPlaced && detectionPipeline != null && 
+                            arStateManager.isReadyForOperations() && arStateManager.isCameraImageAvailable() &&
+                            isInitializationComplete && // Wait for initialization to complete
+                            frameCounter % 10 == 0L && !isMemoryPressureHigh &&
+                            (currentTime - lastProcessedFrame) > 300) { // At least 300ms between frames
+                            
+                            lastProcessedFrame = currentTime
+                            
+                            try {
+                                currentFrame?.acquireCameraImage()?.use { image: Image? ->
+                                    if (image != null && !isDetecting) {
+                                        // Submit to detection pipeline asynchronously with timeout
+                                        scope.launch(Dispatchers.Default) {
+                                            try {
+                                                // Add timeout to prevent blocking
+                                                withTimeout(2000) { // 2 second timeout
+                                                    val bitmap: Bitmap = image.toBitmap()
+                                                    detectionPipeline.submitFrame(bitmap)
+                                                }
+                                            } catch (e: TimeoutCancellationException) {
+                                                Log.w(TAG, "Frame processing timed out")
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Error converting image to bitmap: ${e.message}")
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                // Log only critical errors to avoid spam
+                                if (frameCounter % 100 == 0L) {
+                                    Log.w(TAG, "Error processing frame: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+
+                    // Store reference for later use
+                    arSceneViewRef.value = this
+                }
+                Log.i(TAG, "Returning ARSceneView from factory")
+                sceneView
+            },
+            update = { sceneView ->
+                // Minimal update logic - avoid heavy operations here
+                // Only update when absolutely necessary
+            }
+        )
+
+        // Touch handling overlay - separate from AndroidView to prevent recomposition
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInteropFilter { event ->
@@ -474,114 +650,7 @@ fun ARView(
                         }
                         else -> false
                     }
-                },
-            factory = { ctx ->
-                Log.i(TAG, "Creating ARSceneView...")
-                val sceneView = ARSceneView(ctx).apply {
-                    arSceneViewRef.value = this
-                    Log.i(TAG, "ARSceneView created successfully")
-
-                    configureSession { session, config ->
-                        Log.i(TAG, "Configuring ARCore session...")
-                        // Enhanced ARCore configuration for optimal surface detection
-                        config.focusMode = Config.FocusMode.AUTO
-                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                        config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-                        
-                        // Enable depth for better occlusion and tracking
-                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                            config.depthMode = Config.DepthMode.AUTOMATIC
-                            Log.i(TAG, "Depth mode enabled for better tracking")
-                        } else {
-                            Log.w(TAG, "Depth mode not supported on this device")
-                        }
-                        
-                        // Enable instant placement for faster model placement
-                        try {
-                            config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
-                            Log.i(TAG, "Instant placement mode enabled")
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Instant placement not supported: ${e.message}")
-                        }
-                        
-                        Log.i(TAG, "ARCore session configured with optimized settings")
-                        arStateManager.logSessionCapabilities(session)
-                    }
-
-                    // Enhanced plane visualization for better user feedback
-                    planeRenderer.isEnabled = true
-                    try {
-                        // Some plane renderer properties may not be available in all versions
-                        Log.i(TAG, "Plane renderer enabled with enhanced settings")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not configure plane renderer material: ${e.message}")
-                    }
-
-                    onTrackingFailureChanged = { reason ->
-                        // This is handled by arStateManager now
-                        Log.d(TAG, "Tracking failure changed: $reason")
-                    }
-
-                    onFrame = { frameTime ->
-                        val currentSceneView = arSceneViewRef.value
-                        val currentFrame: ArFrame? = currentSceneView?.frame
-
-                        // Debug: Log frame availability
-                        if (currentFrame != null) {
-                            // Only log every 60 frames to avoid spam
-                            if (frameTime % 60 == 0L) {
-                                Log.d(TAG, "Frame received - Camera tracking state: ${currentFrame.camera.trackingState}")
-                            }
-                        } else {
-                            Log.w(TAG, "No frame available from ARSceneView")
-                        }
-
-                        // Update ARCore state manager with current frame
-                        arStateManager.updateTrackingState(currentFrame)
-
-                        // Update surface detection with current frame
-                        if (currentFrame != null && trackingState == TrackingState.TRACKING) {
-                            surfaceDetectionManager.updatePlanes(currentFrame)
-                        }
-
-                        // Only process frames when in optimal conditions
-                        if (maintenanceStarted && modelPlaced && detectionPipeline != null && 
-                            arStateManager.isReadyForOperations() && arStateManager.isCameraImageAvailable()) {
-                            
-                            try {
-                                currentFrame?.acquireCameraImage()?.use { image: Image? ->
-                                    if (image != null) {
-                                        // Use background thread for bitmap conversion to avoid UI blocking
-                                        scope.launch(Dispatchers.Default) {
-                                            try {
-                                                val bitmap: Bitmap = image.toBitmap()
-                                                // Submit to pipeline (non-blocking)
-                                                detectionPipeline.submitFrame(bitmap)
-                                            } catch (e: Exception) {
-                                                Log.w(TAG, "Error converting image to bitmap: ${e.message}")
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch (e: NotYetAvailableException) {
-                                // Frame not ready, skip silently
-                            } catch (e: ResourceExhaustedException) {
-                                // Camera resources exhausted, skip and log
-                                Log.w(TAG, "Camera resources exhausted, skipping frame")
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Error processing camera frame: ${e.message}")
-                            }
-                        }
-                    }
                 }
-                Log.i(TAG, "Returning ARSceneView from factory")
-                sceneView
-            },
-            update = { sceneView ->
-                Log.d(TAG, "ARSceneView update called")
-                // The sceneView is ready for use
-            }
         )
 
         // Enhanced visual feedback overlay for surface detection
@@ -676,6 +745,16 @@ fun ARView(
                                 )
                                 Text(
                                     text = "ARCore: ${arCoreAvailability?.name ?: "Checking..."}",
+                                    fontSize = 10.sp,
+                                    color = Color.White
+                                )
+                                Text(
+                                    text = "Memory Pressure: ${if (isMemoryPressureHigh) "HIGH" else "Normal"}",
+                                    fontSize = 10.sp,
+                                    color = if (isMemoryPressureHigh) Color.Red else Color.White
+                                )
+                                Text(
+                                    text = "Detection Active: ${if (isDetecting) "Yes" else "No"}",
                                     fontSize = 10.sp,
                                     color = Color.White
                                 )

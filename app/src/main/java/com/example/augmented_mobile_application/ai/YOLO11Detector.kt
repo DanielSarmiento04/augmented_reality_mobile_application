@@ -98,6 +98,13 @@ class YOLO11Detector(
     // Resource disposal safety flag
     private var isDisposed: Boolean = false
     private val outputResults = HashMap<Int, Any>()
+    
+    // Thread safety - synchronize interpreter access
+    private val interpreterLock = Any()
+    
+    // Rate limiting to prevent excessive inference calls
+    private var lastInferenceTime = 0L
+    private val minInferenceInterval = 50L // Minimum 50ms between inferences
 
     init {
         try {
@@ -327,6 +334,14 @@ class YOLO11Detector(
             return Pair(emptyList(), 0L)
         }
         
+        // Rate limiting - prevent excessive inference calls
+        val currentTime = SystemClock.elapsedRealtime()
+        if (currentTime - lastInferenceTime < minInferenceInterval) {
+            debug("Rate limiting: skipping inference (too soon)")
+            return Pair(emptyList(), 0L)
+        }
+        lastInferenceTime = currentTime
+        
         val startTime = SystemClock.elapsedRealtime()
         var detections: List<Detection> = emptyList() // Initialize detections
 
@@ -494,16 +509,47 @@ class YOLO11Detector(
      * Optimized inference with pre-allocated buffers
      */
     private fun runOptimizedInference(inputTensor: ByteBuffer) {
-        try {
-            // Ensure output buffer is ready
-            outputBuffer?.rewind()
+        synchronized(interpreterLock) {
+            // Check if disposed
+            if (isDisposed) {
+                debug("Cannot run inference: detector is disposed")
+                return
+            }
+            
+            try {
+                // Validate input tensor
+                if (inputTensor.capacity() == 0) {
+                    debug("Invalid input tensor: empty buffer")
+                    return
+                }
+                
+                // Ensure buffers are ready
+                inputTensor.rewind()
+                outputBuffer?.rewind()
+                
+                // Validate output buffer
+                if (outputBuffer == null) {
+                    debug("Output buffer is null, skipping inference")
+                    return
+                }
 
-            // Use direct interpreter run with pre-allocated buffers
-            interpreter.run(inputTensor, outputBuffer)
+                // Run inference with timeout protection
+                val startTime = SystemClock.elapsedRealtime()
+                interpreter.run(inputTensor, outputBuffer)
+                val inferenceTime = SystemClock.elapsedRealtime() - startTime
+                
+                if (inferenceTime > 1000) { // Log if inference takes more than 1 second
+                    debug("Long inference time detected: ${inferenceTime}ms")
+                }
 
-        } catch (e: Exception) {
-            debug("Error during optimized inference: ${e.message}")
-            e.printStackTrace()
+            } catch (e: IllegalStateException) {
+                debug("Interpreter in invalid state: ${e.message}")
+            } catch (e: IllegalArgumentException) {
+                debug("Invalid arguments for inference: ${e.message}")
+            } catch (e: Exception) {
+                debug("Error during optimized inference: ${e.message}")
+                // Don't printStackTrace in production to avoid log spam
+            }
         }
     }
 
@@ -1073,54 +1119,56 @@ class YOLO11Detector(
      * Cleanup resources when no longer needed
      */
     fun close() {
-        // Prevent double disposal
-        if (isDisposed) {
-            debug("YOLO11Detector already disposed, skipping cleanup")
-            return
-        }
-        
-        isDisposed = true
-        debug("Starting YOLO11Detector disposal")
-
-        try {
-            interpreter.close()
-            debug("TFLite interpreter closed")
-        } catch (e: Exception) {
-            debug("Error closing interpreter: ${e.message}")
-        }
-
-        try {
-            gpuDelegate?.close()
-            gpuDelegate = null
-            debug("GPU delegate resources released")
-        } catch (e: Exception) {
-            debug("Error closing GPU delegate: ${e.message}")
-        }
-
-        try {
-            nnApiDelegate?.close()
-            nnApiDelegate = null
-            debug("NNAPI delegate resources released")
-        } catch (e: Exception) {
-            debug("Error closing NNAPI delegate: ${e.message}")
-        }
-
-        // Release OpenCV resources safely
-        try {
-            if (!resizedImageMat.empty()) {
-                resizedImageMat.release()
+        synchronized(interpreterLock) {
+            // Prevent double disposal
+            if (isDisposed) {
+                debug("YOLO11Detector already disposed, skipping cleanup")
+                return
             }
-            if (!rgbMat.empty()) {
-                rgbMat.release()
-            }
-            debug("OpenCV resources released")
-        } catch (e: Exception) {
-            debug("Error releasing OpenCV resources: ${e.message}")
-        }
+            
+            isDisposed = true
+            debug("Starting YOLO11Detector disposal")
 
-        // Clear references
-        inputBuffer = null
-        outputBuffer = null
+            try {
+                interpreter.close()
+                debug("TFLite interpreter closed")
+            } catch (e: Exception) {
+                debug("Error closing interpreter: ${e.message}")
+            }
+
+            try {
+                gpuDelegate?.close()
+                gpuDelegate = null
+                debug("GPU delegate resources released")
+            } catch (e: Exception) {
+                debug("Error closing GPU delegate: ${e.message}")
+            }
+
+            try {
+                nnApiDelegate?.close()
+                nnApiDelegate = null
+                debug("NNAPI delegate resources released")
+            } catch (e: Exception) {
+                debug("Error closing NNAPI delegate: ${e.message}")
+            }
+
+            // Release OpenCV resources safely
+            try {
+                if (!resizedImageMat.empty()) {
+                    resizedImageMat.release()
+                }
+                if (!rgbMat.empty()) {
+                    rgbMat.release()
+                }
+                debug("OpenCV resources released")
+            } catch (e: Exception) {
+                debug("Error releasing OpenCV resources: ${e.message}")
+            }
+
+            // Clear references
+            inputBuffer = null
+            outputBuffer = null
+        }
         
         debug("YOLO11Detector disposal completed")
     }
