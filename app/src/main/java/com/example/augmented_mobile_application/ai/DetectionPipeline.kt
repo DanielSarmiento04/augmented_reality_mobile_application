@@ -37,6 +37,9 @@ class DetectionPipeline(
     private var lastDetectionTime = 0L
     private var detectionJob: Job? = null
     private val processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    
+    // Resource disposal safety flag
+    private var isDisposed = false
 
     /**
      * Submit a frame for detection processing
@@ -122,8 +125,26 @@ class DetectionPipeline(
      * Close the detection pipeline and cleanup resources
      */
     fun close() {
+        // Prevent double disposal
+        if (isDisposed) {
+            Log.d(TAG, "DetectionPipeline already disposed, skipping cleanup")
+            return
+        }
+        
+        isDisposed = true
+        Log.i(TAG, "Starting DetectionPipeline disposal")
+        
         stop()
         processingScope.cancel()
+        
+        // Dispose the detector
+        try {
+            detector.close()
+            Log.d(TAG, "YOLO11Detector disposed")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error disposing YOLO11Detector", e)
+        }
+        
         Log.i(TAG, "Detection pipeline closed and resources cleaned up")
     }
 }

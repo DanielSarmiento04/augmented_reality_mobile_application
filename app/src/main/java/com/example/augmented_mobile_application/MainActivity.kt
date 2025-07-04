@@ -1,6 +1,7 @@
 package com.example.augmented_mobile_application
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -14,6 +15,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.augmented_mobile_application.core.ResourcePool
 import com.example.augmented_mobile_application.ui.LoginView
 import com.example.augmented_mobile_application.ui.UserContentView
 import com.example.augmented_mobile_application.ui.ManualView
@@ -28,7 +30,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.launch
 import com.example.augmented_mobile_application.opencv.OpenCVInitializer
-import android.util.Log
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
@@ -88,6 +89,12 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         // Clean up resources
+        try {
+            ResourcePool.getInstance().shutdown()
+            Log.i("MainActivity", "ResourcePool shutdown completed")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error shutting down ResourcePool", e)
+        }
     }
 }
 

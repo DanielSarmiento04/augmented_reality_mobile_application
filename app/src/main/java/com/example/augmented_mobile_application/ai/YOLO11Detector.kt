@@ -94,6 +94,9 @@ class YOLO11Detector(
     private val rgbMat = Mat()
     private var inputBuffer: ByteBuffer? = null
     private var outputBuffer: ByteBuffer? = null
+    
+    // Resource disposal safety flag
+    private var isDisposed: Boolean = false
     private val outputResults = HashMap<Int, Any>()
 
     init {
@@ -318,6 +321,12 @@ class YOLO11Detector(
      */
     fun detect(bitmap: Bitmap, confidenceThreshold: Float = CONFIDENCE_THRESHOLD,
                iouThreshold: Float = IOU_THRESHOLD): Pair<List<Detection>, Long> { // Return Pair
+        // Check if detector is disposed
+        if (isDisposed) {
+            debug("YOLO11Detector is disposed, returning empty results")
+            return Pair(emptyList(), 0L)
+        }
+        
         val startTime = SystemClock.elapsedRealtime()
         var detections: List<Detection> = emptyList() // Initialize detections
 
@@ -1064,6 +1073,15 @@ class YOLO11Detector(
      * Cleanup resources when no longer needed
      */
     fun close() {
+        // Prevent double disposal
+        if (isDisposed) {
+            debug("YOLO11Detector already disposed, skipping cleanup")
+            return
+        }
+        
+        isDisposed = true
+        debug("Starting YOLO11Detector disposal")
+
         try {
             interpreter.close()
             debug("TFLite interpreter closed")
@@ -1073,6 +1091,7 @@ class YOLO11Detector(
 
         try {
             gpuDelegate?.close()
+            gpuDelegate = null
             debug("GPU delegate resources released")
         } catch (e: Exception) {
             debug("Error closing GPU delegate: ${e.message}")
@@ -1080,15 +1099,21 @@ class YOLO11Detector(
 
         try {
             nnApiDelegate?.close()
+            nnApiDelegate = null
             debug("NNAPI delegate resources released")
         } catch (e: Exception) {
             debug("Error closing NNAPI delegate: ${e.message}")
         }
 
-        // Release OpenCV resources
+        // Release OpenCV resources safely
         try {
-            resizedImageMat.release()
-            rgbMat.release()
+            if (!resizedImageMat.empty()) {
+                resizedImageMat.release()
+            }
+            if (!rgbMat.empty()) {
+                rgbMat.release()
+            }
+            debug("OpenCV resources released")
         } catch (e: Exception) {
             debug("Error releasing OpenCV resources: ${e.message}")
         }
@@ -1096,8 +1121,8 @@ class YOLO11Detector(
         // Clear references
         inputBuffer = null
         outputBuffer = null
-        gpuDelegate = null
-        nnApiDelegate = null
+        
+        debug("YOLO11Detector disposal completed")
     }
 
     /**

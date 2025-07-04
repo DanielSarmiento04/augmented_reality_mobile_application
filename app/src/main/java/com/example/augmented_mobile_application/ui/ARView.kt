@@ -275,6 +275,20 @@ fun ARView(
         }
     }
 
+    // Cleanup ARSceneView on dispose to prevent Filament double-free errors
+    DisposableEffect(arSceneViewRef.value) {
+        onDispose {
+            Log.i(TAG, "Disposing ARSceneView")
+            try {
+                arSceneViewRef.value?.destroy()
+                arSceneViewRef.value = null
+                Log.i(TAG, "ARSceneView disposed")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error disposing ARSceneView: ${e.message}", e)
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier
