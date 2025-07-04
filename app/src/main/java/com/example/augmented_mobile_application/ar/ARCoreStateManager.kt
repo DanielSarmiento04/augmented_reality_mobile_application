@@ -119,9 +119,12 @@ class ARCoreStateManager {
         }
 
         // Check instant placement support
-        if (config.instantPlacementMode == Config.InstantPlacementMode.DISABLED &&
-            session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)) {
-            warnings.add("Instant placement is disabled but supported - consider enabling for faster placement")
+        try {
+            if (config.instantPlacementMode == Config.InstantPlacementMode.DISABLED) {
+                warnings.add("Instant placement is disabled - consider enabling for faster placement")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not check instant placement support: ${e.message}")
         }
 
         // Check light estimation
@@ -143,8 +146,6 @@ class ARCoreStateManager {
     fun logSessionCapabilities(session: Session) {
         Log.i(TAG, "ARCore Session Capabilities:")
         Log.i(TAG, "- Depth mode supported: ${session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)}")
-        Log.i(TAG, "- Instant placement supported: ${session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)}")
-        Log.i(TAG, "- Shared camera supported: ${session.isSharedCameraUsed}")
         
         try {
             val cameraConfigFilter = CameraConfigFilter(session)

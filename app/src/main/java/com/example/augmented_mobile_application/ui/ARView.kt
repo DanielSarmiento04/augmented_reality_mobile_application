@@ -2,8 +2,14 @@ package com.example.augmented_mobile_application.ui
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.collectAsState
@@ -15,6 +21,7 @@ import androidx.compose.ui.graphics.Paint as ComposePaint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -36,6 +43,8 @@ import io.github.sceneview.math.Rotation
 import io.github.sceneview.node.ModelNode
 import io.github.sceneview.math.Scale
 import com.google.ar.core.Config
+import com.google.ar.core.Plane
+import com.google.ar.core.Trackable
 import com.google.ar.core.TrackingFailureReason
 import com.google.ar.core.TrackingState
 import com.google.ar.core.Frame as ArFrame
@@ -57,6 +66,8 @@ import com.example.augmented_mobile_application.ai.DetectionPipeline
 import com.example.augmented_mobile_application.ai.DetectionValidator
 import com.example.augmented_mobile_application.ar.ModelPositioningManager
 import com.example.augmented_mobile_application.ar.ARCoreStateManager
+import com.example.augmented_mobile_application.ar.SurfaceDetectionManager
+import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.ResourceExhaustedException
 import java.util.concurrent.TimeUnit
@@ -144,15 +155,22 @@ fun ARView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var trackingFailureReason by remember { mutableStateOf<TrackingFailureReason?>(null) }
-    var modelPlaced by remember { mutableStateOf(false) }
+    // Enhanced state management for better surface detection feedback
     var isLoadingModel by remember { mutableStateOf(true) }
     var instructionStep by remember { mutableStateOf(0) }
     var maintenanceStarted by remember { mutableStateOf(false) }
+    
+    // Surface detection state
+    var surfacesDetected by remember { mutableStateOf(0) }
+    var isPlacementReady by remember { mutableStateOf(false) }
+    var lastTouchPosition by remember { mutableStateOf<Pair<Float, Float>?>(null) }
+    var showPlacementIndicator by remember { mutableStateOf(false) }
 
     val yoloDetector = rememberYoloDetector(context)
     val detectionPipeline = rememberDetectionPipeline(yoloDetector)
     val arStateManager = remember { ARCoreStateManager() }
+    val surfaceDetectionManager = remember { SurfaceDetectionManager() }
+    val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }
     
     // Use StateFlow from DetectionPipeline instead of local state
     val detectionResults by detectionPipeline?.detectionResults?.collectAsState() ?: remember { mutableStateOf(emptyList()) }
@@ -163,9 +181,10 @@ fun ARView(
     // ARCore state monitoring
     val trackingState by arStateManager.trackingState.collectAsState()
     val trackingFailureReason by arStateManager.trackingFailureReason.collectAsState()
+    var modelPlaced by remember { mutableStateOf(false) }
 
     val instructions = listOf(
-        "Escanee una superficie plana y coloque el modelo 3D",
+        "Mueva lentamente el dispositivo para detectar superficies planas",
         "Verificar que la bomba esté apagada",
         "Inspeccionar el estado general de la bomba (Detección activa)",
         "Comprobar conexiones eléctricas (Detección activa)",
@@ -178,12 +197,49 @@ fun ARView(
     val anchorNodeRef = remember { mutableStateOf<AnchorNode?>(null) }
     val modelPositioningManager = remember { mutableStateOf<ModelPositioningManager?>(null) }
 
-    // Initialize model positioning manager when ARSceneView is ready
+    // Initialize model placement coordinator when ARSceneView is ready
     LaunchedEffect(arSceneViewRef.value) {
         arSceneViewRef.value?.let { sceneView ->
+            modelPlacementCoordinator.value = ModelPlacementCoordinator(sceneView).also { coordinator ->
+                // Load the 3D model
+                scope.launch {
+                    val modelLoaded = coordinator.loadModel("pump/pump.glb")
+                    if (modelLoaded) {
+                        isLoadingModel = false
+                        Log.i(TAG, "3D model loaded successfully via ModelPlacementCoordinator")
+                    } else {
+                        isLoadingModel = false
+                        Log.e(TAG, "Failed to load 3D model")
+                    }
+                }
+            }
+            
+            // Initialize legacy model positioning manager for detection-based placement
             modelPositioningManager.value = ModelPositioningManager(sceneView)
             Log.i(TAG, "ModelPositioningManager initialized")
         }
+    }
+
+    // Enhanced surface detection monitoring
+    LaunchedEffect(trackingState) {
+        if (trackingState == TrackingState.TRACKING) {
+            arSceneViewRef.value?.let { sceneView ->
+                val frame = sceneView.frame
+                if (frame != null) {
+                    surfaceDetectionManager.updatePlanes(frame)
+                }
+            }
+        }
+    }
+    
+    // Monitor surface detection state
+    val detectedPlanes by surfaceDetectionManager.detectedPlanes.collectAsState()
+    val isSurfaceReady by surfaceDetectionManager.isSurfaceReady.collectAsState()
+    
+    // Update local surface state
+    LaunchedEffect(detectedPlanes, isSurfaceReady) {
+        surfacesDetected = detectedPlanes.size
+        isPlacementReady = isSurfaceReady
     }
 
     // Update model positions when detections change
@@ -226,39 +282,73 @@ fun ARView(
                 .pointerInteropFilter { event ->
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
-                            if (maintenanceStarted && !modelPlaced) {
+                            if (maintenanceStarted && !modelPlaced && isPlacementReady) {
+                                // Store touch position for visual feedback
+                                lastTouchPosition = Pair(event.x, event.y)
+                                showPlacementIndicator = true
+                                
+                                // Enhanced hit test with plane validation
                                 arSceneViewRef.value?.let { arSceneView ->
                                     val frame = arSceneView.frame
-                                    // Critical: Check ARCore tracking state before hitTest
                                     if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
                                         try {
                                             val hitResults = frame.hitTest(event.x, event.y)
-                                            if (!hitResults.isNullOrEmpty()) {
-                                                hitResults.firstOrNull()?.let { hit ->
-                                                    val anchor = hit.createAnchor()
-                                                    val anchorNode = AnchorNode(engine = arSceneView.engine, anchor = anchor)
-                                                    arSceneView.scene.addEntity(anchorNode.entity)
-
-                                                    modelNodeRef.value?.let { modelNode ->
-                                                        arSceneView.scene.addEntity(modelNode.entity)
-                                                        modelNode.transform.position = anchorNode.transform.position
-
-                                                        modelPlaced = true
-                                                        anchorNodeRef.value = anchorNode
-                                                        instructionStep = maxOf(1, instructionStep)
-                                                        
-                                                        Log.i(TAG, "Model placed successfully at anchor position")
-                                                    }
+                                            
+                                            // Enhanced hit test with plane validation using SurfaceDetectionManager
+                                            val bestHit = surfaceDetectionManager.findBestPlaneForPlacement(
+                                                frame, event.x, event.y
+                                            )
+                                            
+                                            if (bestHit != null) {
+                                                // Use ModelPlacementCoordinator for enhanced placement
+                                                val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(bestHit)
+                                                
+                                                if (placementSuccess == true) {
+                                                    modelPlaced = true
+                                                    instructionStep = maxOf(1, instructionStep)
+                                                    showPlacementIndicator = false
+                                                    
+                                                    // Store reference for legacy compatibility
+                                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
+                                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
+                                                    
+                                                    Log.i(TAG, "Model placed successfully using enhanced placement at distance: ${bestHit.distance}m")
+                                                } else {
+                                                    Log.e(TAG, "Failed to place model using ModelPlacementCoordinator")
+                                                    showPlacementIndicator = false
                                                 }
                                             } else {
-                                                Log.d(TAG, "No hit results found for touch event")
+                                                Log.d(TAG, "No valid plane surface found at touch point")
+                                                // Fallback to estimated placement
+                                                val fallbackSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                                    event.x, event.y, 1.5f
+                                                )
+                                                
+                                                if (fallbackSuccess == true) {
+                                                    modelPlaced = true
+                                                    instructionStep = maxOf(1, instructionStep)
+                                                    showPlacementIndicator = false
+                                                    
+                                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
+                                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
+                                                    
+                                                    Log.i(TAG, "Model placed using estimated position fallback")
+                                                } else {
+                                                    // Auto-hide indicator after failed placement
+                                                    scope.launch {
+                                                        kotlinx.coroutines.delay(1000)
+                                                        showPlacementIndicator = false
+                                                    }
+                                                }
                                             }
                                         } catch (e: Exception) {
-                                            Log.e(TAG, "Error during hit test: ${e.message}", e)
+                                            Log.e(TAG, "Error during enhanced hit test: ${e.message}", e)
+                                            showPlacementIndicator = false
                                         }
                                     } else {
-                                        val trackingState = frame?.camera?.trackingState
-                                        Log.w(TAG, "Cannot place model - ARCore not tracking. Current state: $trackingState")
+                                        val currentTrackingState = frame?.camera?.trackingState
+                                        Log.w(TAG, "Cannot place model - ARCore not tracking. Current state: $currentTrackingState")
+                                        showPlacementIndicator = false
                                     }
                                 }
                             }
@@ -272,7 +362,7 @@ fun ARView(
                     arSceneViewRef.value = this
 
                     configureSession { session, config ->
-                        // Optimized ARCore configuration for better performance and tracking
+                        // Enhanced ARCore configuration for optimal surface detection
                         config.focusMode = Config.FocusMode.AUTO
                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                         config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
@@ -287,18 +377,28 @@ fun ARView(
                         }
                         
                         // Enable instant placement for faster model placement
-                        if (session.isInstantPlacementModeSupported(Config.InstantPlacementMode.LOCAL_Y_UP)) {
+                        try {
                             config.instantPlacementMode = Config.InstantPlacementMode.LOCAL_Y_UP
                             Log.i(TAG, "Instant placement mode enabled")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Instant placement not supported: ${e.message}")
                         }
                         
                         Log.i(TAG, "ARCore session configured with optimized settings")
+                        arStateManager.logSessionCapabilities(session)
                     }
 
+                    // Enhanced plane visualization for better user feedback
                     planeRenderer.isEnabled = true
+                    try {
+                        // Some plane renderer properties may not be available in all versions
+                        Log.i(TAG, "Plane renderer enabled with enhanced settings")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not configure plane renderer material: ${e.message}")
+                    }
 
                     onTrackingFailureChanged = { reason ->
-                        trackingFailureReason = reason
+                        // This is handled by arStateManager now
                     }
 
                     onFrame = { frameTime ->
@@ -307,6 +407,11 @@ fun ARView(
 
                         // Update ARCore state manager with current frame
                         arStateManager.updateTrackingState(currentFrame)
+
+                        // Update surface detection with current frame
+                        if (currentFrame != null && trackingState == TrackingState.TRACKING) {
+                            surfaceDetectionManager.updatePlanes(currentFrame)
+                        }
 
                         // Only process frames when in optimal conditions
                         if (maintenanceStarted && modelPlaced && detectionPipeline != null && 
@@ -337,26 +442,19 @@ fun ARView(
                             }
                         }
                     }
-
-                    scope.launch {
-                        try {
-                            val modelNode = ModelNode(
-                                modelInstance = modelLoader.createModelInstance(
-                                    assetFileLocation = "pump/pump.glb"
-                                ),
-                                scaleToUnits = 1.0f
-                            ).apply {
-                                isShadowReceiver = false
-                            }
-                            modelNodeRef.value = modelNode
-                            isLoadingModel = false
-                        } catch (e: Exception) {
-                            isLoadingModel = false
-                        }
-                    }
                 }
                 sceneView
             }
+        )
+
+        // Enhanced visual feedback overlay for surface detection
+        SurfaceDetectionOverlay(
+            isPlacementReady = isPlacementReady,
+            surfacesDetected = surfacesDetected,
+            trackingState = trackingState,
+            lastTouchPosition = lastTouchPosition,
+            showPlacementIndicator = showPlacementIndicator,
+            modifier = Modifier.fillMaxSize()
         )
 
         DrawDetectionsOverlay(
@@ -394,6 +492,18 @@ fun ARView(
                         fontSize = 16.sp,
                         color = Color.Black
                     )
+                    
+                    // Enhanced surface detection feedback
+                    if (maintenanceStarted && !modelPlaced) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SurfaceDetectionStatus(
+                            trackingState = trackingState,
+                            surfacesDetected = surfacesDetected,
+                            isPlacementReady = isPlacementReady,
+                            detectionQuality = surfaceDetectionManager.getDetectionQuality()
+                        )
+                    }
+                    
                     Spacer(modifier = Modifier.height(4.dp))
 
                     if (maintenanceStarted && modelPlaced) {
@@ -471,10 +581,11 @@ fun ARView(
                                     maintenanceStarted = false
                                     modelPlaced = false
                                     instructionStep = 0
-                                    // Detection state is managed by DetectionPipeline lifecycle
-                                    anchorNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
-                                    modelNodeRef.value?.let { arSceneViewRef.value?.scene?.removeEntity(it.entity) }
+                                    // Enhanced cleanup using ModelPlacementCoordinator
+                                    modelPlacementCoordinator.value?.removeCurrentModel()
+                                    surfaceDetectionManager.reset()
                                     anchorNodeRef.value = null
+                                    modelNodeRef.value = null
                                     navController.navigateUp()
                                 }
                             },
@@ -491,13 +602,18 @@ fun ARView(
                     Text(
                         text = when {
                             isLoadingModel -> "Cargando modelo..."
-                            !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para habilitar la colocación del modelo"
-                            else -> "Mueva la cámara para detectar superficies planas y toque para colocar el modelo"
+                            !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
+                            !isPlacementReady -> "Mueva el dispositivo lentamente para detectar superficies"
+                            else -> "Toque en una superficie plana para colocar el modelo 3D"
                         },
                         color = Color.White,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.7f))
-                            .padding(8.dp)
+                            .background(
+                                Color.Black.copy(alpha = 0.7f),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                            )
+                            .padding(12.dp)
                             .align(Alignment.CenterHorizontally)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -748,4 +864,128 @@ fun Image.toBitmap(): Bitmap {
     val imageBytes = out.toByteArray()
     return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
         ?: throw RuntimeException("BitmapFactory.decodeByteArray returned null")
+}
+
+// Enhanced surface detection status component
+@Composable
+fun SurfaceDetectionStatus(
+    trackingState: TrackingState,
+    surfacesDetected: Int,
+    isPlacementReady: Boolean,
+    detectionQuality: SurfaceDetectionManager.PlaneDetectionQuality
+) {
+    val statusColor by animateColorAsState(
+        targetValue = when {
+            trackingState != TrackingState.TRACKING -> Color.Red
+            detectionQuality == SurfaceDetectionManager.PlaneDetectionQuality.NONE -> Color.Red
+            detectionQuality in listOf(
+                SurfaceDetectionManager.PlaneDetectionQuality.POOR, 
+                SurfaceDetectionManager.PlaneDetectionQuality.FAIR
+            ) -> Color.Yellow
+            else -> DarkGreen
+        },
+        animationSpec = tween(300)
+    )
+    
+    val statusText = when {
+        trackingState != TrackingState.TRACKING -> "Iniciando seguimiento..."
+        detectionQuality == SurfaceDetectionManager.PlaneDetectionQuality.NONE -> "Buscando superficies..."
+        detectionQuality == SurfaceDetectionManager.PlaneDetectionQuality.POOR -> "Mejorar iluminación y superficies"
+        detectionQuality == SurfaceDetectionManager.PlaneDetectionQuality.FAIR -> "Continúe moviendo el dispositivo"
+        detectionQuality == SurfaceDetectionManager.PlaneDetectionQuality.GOOD -> "Superficies detectadas: $surfacesDetected"
+        else -> "Excelente detección - Listo para colocar"
+    }
+    
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .background(
+                statusColor.copy(alpha = 0.1f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+            )
+            .padding(8.dp)
+    ) {
+        Icon(
+            imageVector = when (detectionQuality) {
+                SurfaceDetectionManager.PlaneDetectionQuality.NONE -> Icons.Default.Search
+                SurfaceDetectionManager.PlaneDetectionQuality.POOR -> Icons.Default.Warning
+                SurfaceDetectionManager.PlaneDetectionQuality.FAIR -> Icons.Default.Refresh
+                SurfaceDetectionManager.PlaneDetectionQuality.GOOD -> Icons.Default.Check
+                SurfaceDetectionManager.PlaneDetectionQuality.EXCELLENT -> Icons.Default.CheckCircle
+            },
+            contentDescription = null,
+            tint = statusColor,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = statusText,
+            color = statusColor,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+// Enhanced surface detection overlay with visual feedback
+@Composable
+fun SurfaceDetectionOverlay(
+    isPlacementReady: Boolean,
+    surfacesDetected: Int,
+    trackingState: TrackingState,
+    lastTouchPosition: Pair<Float, Float>?,
+    showPlacementIndicator: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Canvas(modifier = modifier) {
+        val canvasWidth = size.width
+        val canvasHeight = size.height
+        
+        // Draw crosshair when ready for placement
+        if (isPlacementReady && trackingState == TrackingState.TRACKING) {
+            val centerX = canvasWidth / 2
+            val centerY = canvasHeight / 2
+            val crosshairSize = 30.dp.toPx()
+            
+            drawLine(
+                color = androidx.compose.ui.graphics.Color.White,
+                start = androidx.compose.ui.geometry.Offset(centerX - crosshairSize, centerY),
+                end = androidx.compose.ui.geometry.Offset(centerX + crosshairSize, centerY),
+                strokeWidth = 3.dp.toPx()
+            )
+            drawLine(
+                color = androidx.compose.ui.graphics.Color.White,
+                start = androidx.compose.ui.geometry.Offset(centerX, centerY - crosshairSize),
+                end = androidx.compose.ui.geometry.Offset(centerX, centerY + crosshairSize),
+                strokeWidth = 3.dp.toPx()
+            )
+            
+            // Draw circle around crosshair
+            drawCircle(
+                color = androidx.compose.ui.graphics.Color.White,
+                radius = crosshairSize * 1.5f,
+                center = androidx.compose.ui.geometry.Offset(centerX, centerY),
+                style = Stroke(width = 2.dp.toPx())
+            )
+        }
+        
+        // Draw placement indicator at touch position
+        if (showPlacementIndicator && lastTouchPosition != null) {
+            val (touchX, touchY) = lastTouchPosition
+            drawCircle(
+                color = DarkGreen.copy(alpha = 0.7f),
+                radius = 40.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(touchX, touchY),
+                style = Stroke(width = 4.dp.toPx())
+            )
+            
+            // Animated ripple effect
+            drawCircle(
+                color = DarkGreen.copy(alpha = 0.3f),
+                radius = 60.dp.toPx(),
+                center = androidx.compose.ui.geometry.Offset(touchX, touchY),
+                style = Stroke(width = 2.dp.toPx())
+            )
+        }
+    }
 }
