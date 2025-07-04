@@ -6,7 +6,6 @@ import androidx.annotation.MainThread
 import androidx.annotation.WorkerThread
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,9 +55,7 @@ class ResourcePool private constructor(
             if (INSTANCE == null) {
                 synchronized(this) {
                     if (INSTANCE == null) {
-                        INSTANCE = ResourcePool(context.applicationContext, config).apply {
-                            ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-                        }
+                        INSTANCE = ResourcePool(context.applicationContext, config)
                     }
                 }
             }
