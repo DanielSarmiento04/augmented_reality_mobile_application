@@ -136,11 +136,11 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
 }
 
 @Composable
-fun rememberDetectionPipeline(detector: YOLO11Detector?, context: Context): DetectionPipeline? {
+fun rememberDetectionPipeline(detector: YOLO11Detector?): DetectionPipeline? {
     return remember(detector) {
         detector?.let { 
-            DetectionPipeline(it, TARGET_CLASS_ID, context).also {
-                Log.i(TAG, "DetectionPipeline initialized with resource management")
+            DetectionPipeline(it, TARGET_CLASS_ID).also {
+                Log.i(TAG, "DetectionPipeline initialized")
             }
         }
     }
@@ -167,7 +167,7 @@ fun ARView(
     var showPlacementIndicator by remember { mutableStateOf(false) }
 
     val yoloDetector = rememberYoloDetector(context)
-    val detectionPipeline = rememberDetectionPipeline(yoloDetector, context)
+    val detectionPipeline = rememberDetectionPipeline(yoloDetector)
     val arStateManager = remember { ARCoreStateManager() }
     val surfaceDetectionManager = remember { SurfaceDetectionManager() }
     val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }

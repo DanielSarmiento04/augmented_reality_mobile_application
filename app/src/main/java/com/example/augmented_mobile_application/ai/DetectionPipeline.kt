@@ -1,38 +1,23 @@
 package com.example.augmented_mobile_application.ai
 
-import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
-import com.example.augmented_mobile_application.core.ResourceAdministrator
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
- * Enhanced high-performance detection pipeline with advanced resource management.
- * Manages frame processing for optimal real-time object detection performance
- * while ensuring proper resource cleanup and memory management.
+ * High-performance detection pipeline that manages frame processing
+ * for optimal real-time object detection performance.
  */
 class DetectionPipeline(
     private val detector: YOLO11Detector,
-    private val targetClassId: Int = 41,
-    private val context: Context? = null
-) : AutoCloseable {
+    private val targetClassId: Int = 41
+) {
     companion object {
         private const val TAG = "DetectionPipeline"
         private const val DETECTION_INTERVAL_MS = 50L // 20 FPS for detection
-        private const val RESOURCE_TIMEOUT_MS = 300_000L // 5 minutes
     }
-
-    // Resource management
-    private val resourceAdmin = context?.let { ResourceAdministrator.getInstance(it) }
-    private val resourceHandle = resourceAdmin?.registerResource(
-        resourceId = "detection_pipeline_${hashCode()}",
-        resource = this,
-        priority = ResourceAdministrator.ResourcePriority.HIGH,
-        timeoutMs = RESOURCE_TIMEOUT_MS,
-        onCleanup = { close() }
-    )
 
     // Detection state management
     private val _detectionResults = MutableStateFlow<List<YOLO11Detector.Detection>>(emptyList())
@@ -139,11 +124,6 @@ class DetectionPipeline(
     fun close() {
         stop()
         processingScope.cancel()
-        resourceHandle?.close()
         Log.i(TAG, "Detection pipeline closed and resources cleaned up")
-    }
-
-    override fun close() {
-        close()
     }
 }

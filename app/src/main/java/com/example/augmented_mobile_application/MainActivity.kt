@@ -14,9 +14,6 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.example.augmented_mobile_application.core.ResourceAdministrator
-import com.example.augmented_mobile_application.core.rememberResourceAdministrator
-import com.example.augmented_mobile_application.core.MemoryPressureMonitor
 import com.example.augmented_mobile_application.ui.LoginView
 import com.example.augmented_mobile_application.ui.UserContentView
 import com.example.augmented_mobile_application.ui.ManualView
