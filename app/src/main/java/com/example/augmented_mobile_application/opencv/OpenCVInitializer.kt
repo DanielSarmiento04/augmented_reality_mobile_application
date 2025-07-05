@@ -47,4 +47,11 @@ object OpenCVInitializer {
             }
         }.start()
     }
+
+    /**
+     * Initialize OpenCV with context (for compatibility)
+     */
+    fun initialize(context: Context): Boolean {
+        return initSync()
+    }
 }

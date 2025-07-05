@@ -17,6 +17,7 @@
     <uses-feature android:name="android.hardware.camera.ar" android:required="true"/>
     
     <application
+        android:name=".AugmentedARApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -26,6 +27,8 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Augmented_mobile_application"
         android:enableOnBackInvokedCallback="true"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
         tools:targetApi="31">
         
         <!-- AR Core meta-data with conflict resolution -->

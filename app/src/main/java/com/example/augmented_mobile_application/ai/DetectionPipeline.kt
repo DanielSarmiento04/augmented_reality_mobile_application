@@ -16,7 +16,7 @@ class DetectionPipeline(
 ) {
     companion object {
         private const val TAG = "DetectionPipeline"
-        private const val DETECTION_INTERVAL_MS = 50L // 20 FPS for detection
+        private const val DETECTION_INTERVAL_MS = 100L // 10 FPS for detection (reduced from 20 FPS)
     }
 
     // Detection state management
@@ -36,7 +36,10 @@ class DetectionPipeline(
     private var isActive = false
     private var lastDetectionTime = 0L
     private var detectionJob: Job? = null
-    private val processingScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    
+    // CRITICAL: Use dedicated dispatcher with limited threads
+    private val detectionDispatcher = Dispatchers.Default.limitedParallelism(1)
+    private val processingScope = CoroutineScope(detectionDispatcher + SupervisorJob())
     
     // Resource disposal safety flag
     private var isDisposed = false
@@ -45,24 +48,26 @@ class DetectionPipeline(
      * Submit a frame for detection processing
      */
     fun submitFrame(bitmap: Bitmap) {
-        if (!isActive) return
+        if (!isActive || isDisposed) return
         
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastDetectionTime < DETECTION_INTERVAL_MS) {
+            bitmap.recycle() // CRITICAL: Clean up unused bitmaps
             return // Throttle detection rate
         }
         
         if (_isProcessing.value) {
+            bitmap.recycle() // CRITICAL: Clean up if already processing
             return // Skip if already processing
         }
         
-        detectionJob?.cancel()
-        // Cancel any ongoing detection to prevent queue buildup
+        // CRITICAL: Cancel any ongoing detection to prevent queue buildup
         detectionJob?.cancel()
         
-        detectionJob = processingScope.launch(Dispatchers.Default) {
+        detectionJob = processingScope.launch {
             try {
                 _isProcessing.value = true
+                lastDetectionTime = currentTime
                 
                 // Additional safety check before detection
                 if (isDisposed) {
@@ -70,13 +75,13 @@ class DetectionPipeline(
                     return@launch
                 }
                 
-                // Run detection with timeout
-                val detectionResult = withTimeoutOrNull(2000L) { // 2 second timeout
+                // CRITICAL: Run detection with strict timeout
+                val detectionResult = withTimeoutOrNull(150L) { // 150ms timeout
                     detector.detect(bitmap)
                 }
                 
                 if (detectionResult == null) {
-                    Log.w(TAG, "Detection timed out, skipping frame")
+                    Log.w(TAG, "Detection timed out after 150ms, skipping frame")
                     return@launch
                 }
                 
@@ -89,7 +94,7 @@ class DetectionPipeline(
                 
                 val hasTargetDetection = filteredDetections.isNotEmpty()
                 
-                // Update UI state on main dispatcher - use immediate to avoid delays
+                // CRITICAL: Update UI state on main dispatcher with immediate execution
                 withContext(Dispatchers.Main.immediate) {
                     if (!isDisposed) { // Double-check before updating UI
                         _detectionResults.value = detections
@@ -117,6 +122,12 @@ class DetectionPipeline(
                 }
             } finally {
                 _isProcessing.value = false
+                // CRITICAL: Always recycle bitmap to prevent memory leaks
+                try {
+                    bitmap.recycle()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error recycling bitmap: ${e.message}")
+                }
             }
         }
     }

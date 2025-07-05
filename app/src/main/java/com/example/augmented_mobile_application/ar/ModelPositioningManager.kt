@@ -79,8 +79,8 @@ class ModelPositioningManager(
 
         try {
             // Calculate center point of detection box
-            val centerX = detection.box.x + detection.box.width / 2f
-            val centerY = detection.box.y + detection.box.height / 2f
+            val centerX = detection.box.centerX
+            val centerY = detection.box.centerY
 
             Log.d(TAG, "Detection center: ($centerX, $centerY), Box: ${detection.box}")
 

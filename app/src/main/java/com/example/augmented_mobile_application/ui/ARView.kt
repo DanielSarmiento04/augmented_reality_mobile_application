@@ -518,32 +518,33 @@ fun ARView(
                             surfaceDetectionManager.updatePlanes(currentFrame)
                         }
 
-                        // More aggressive frame limiting to prevent ANR
-                        // Only process every 10th frame (~3 FPS) and add minimum time gap
+                        // CRITICAL FIX: Aggressive frame throttling to prevent ANR
+                        // Only process every 15th frame (~2 FPS) with strict time limits
                         val currentTime = System.currentTimeMillis()
                         if (maintenanceStarted && modelPlaced && detectionPipeline != null && 
                             arStateManager.isReadyForOperations() && arStateManager.isCameraImageAvailable() &&
                             isInitializationComplete && // Wait for initialization to complete
-                            frameCounter % 10 == 0L && !isMemoryPressureHigh &&
-                            (currentTime - lastProcessedFrame) > 300) { // At least 300ms between frames
+                            frameCounter % 15 == 0L && !isMemoryPressureHigh &&
+                            (currentTime - lastProcessedFrame) > 500) { // At least 500ms between frames
                             
                             lastProcessedFrame = currentTime
                             
                             try {
                                 currentFrame?.acquireCameraImage()?.use { image: Image? ->
                                     if (image != null && !isDetecting) {
-                                        // Submit to detection pipeline asynchronously with timeout
+                                        // CRITICAL: Submit to background thread immediately
                                         scope.launch(Dispatchers.Default) {
                                             try {
-                                                // Add timeout to prevent blocking
-                                                withTimeout(2000) { // 2 second timeout
-                                                    val bitmap: Bitmap = image.toBitmap()
+                                                // CRITICAL: 200ms timeout for total processing
+                                                withTimeout(200) { 
+                                                    val bitmap: Bitmap = image.toBitmapOptimized()
                                                     detectionPipeline.submitFrame(bitmap)
+                                                    bitmap.recycle() // CRITICAL: Explicit cleanup
                                                 }
                                             } catch (e: TimeoutCancellationException) {
-                                                Log.w(TAG, "Frame processing timed out")
+                                                Log.w(TAG, "Frame processing timed out after 200ms")
                                             } catch (e: Exception) {
-                                                Log.w(TAG, "Error converting image to bitmap: ${e.message}")
+                                                Log.w(TAG, "Error processing frame: ${e.message}")
                                             }
                                         }
                                     }
@@ -975,10 +976,10 @@ fun DrawDetectionsOverlay(
                 }
 
                 canvas.nativeCanvas.drawRect(
-                    detection.box.x.toFloat(),
-                    detection.box.y.toFloat(),
-                    (detection.box.x + detection.box.width).toFloat(),
-                    (detection.box.y + detection.box.height).toFloat(),
+                    detection.box.x1,
+                    detection.box.y1,
+                    detection.box.x2,
+                    detection.box.y2,
                     currentBoxPaint
                 )
 
@@ -987,10 +988,10 @@ fun DrawDetectionsOverlay(
                 val textWidth = textBounds.width()
                 val textHeight = textBounds.height()
 
-                val textBgLeft = detection.box.x.toFloat()
-                val textBgTop = detection.box.y.toFloat() - textHeight - 10f
-                val textBgRight = detection.box.x.toFloat() + textWidth + 10f
-                val textBgBottom = detection.box.y.toFloat()
+                val textBgLeft = detection.box.x1
+                val textBgTop = detection.box.y1 - textHeight - 10f
+                val textBgRight = detection.box.x1 + textWidth + 10f
+                val textBgBottom = detection.box.y1
 
                 val clampedTextBgTop = maxOf(0f, textBgTop)
                 val clampedTextBgBottom = clampedTextBgTop + textHeight + 10f
@@ -1003,7 +1004,7 @@ fun DrawDetectionsOverlay(
                 val textY = clampedTextBgTop + textHeight + 5f - (textPaint.descent() / 2)
                 canvas.nativeCanvas.drawText(
                     label,
-                    detection.box.x.toFloat() + 5f,
+                    detection.box.x1 + 5f,
                     textY,
                     textPaint
                 )
@@ -1129,6 +1130,47 @@ fun Image.toBitmap(): Bitmap {
     val imageBytes = out.toByteArray()
     return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
         ?: throw RuntimeException("BitmapFactory.decodeByteArray returned null")
+}
+
+// CRITICAL: Optimized image conversion extensions
+private fun Image.toBitmapOptimized(): Bitmap {
+    val planes = this.planes
+    val yBuffer = planes[0].buffer
+    val uBuffer = planes[1].buffer
+    val vBuffer = planes[2].buffer
+
+    val ySize = yBuffer.remaining()
+    val uSize = uBuffer.remaining()
+    val vSize = vBuffer.remaining()
+
+    val nv21 = ByteArray(ySize + uSize + vSize)
+
+    // Copy Y plane
+    yBuffer.get(nv21, 0, ySize)
+    
+    // Copy UV planes - optimized for NV21 format
+    val uvPixelStride = planes[1].pixelStride
+    if (uvPixelStride == 1) {
+        uBuffer.get(nv21, ySize, uSize)
+        vBuffer.get(nv21, ySize + uSize, vSize)
+    } else {
+        // Handle interleaved UV format efficiently
+        val uvBuffer = ByteArray(uSize + vSize)
+        uBuffer.get(uvBuffer, 0, uSize)
+        vBuffer.get(uvBuffer, uSize, vSize)
+        
+        // Deinterleave UV
+        for (i in 0 until uSize step uvPixelStride) {
+            nv21[ySize + i / uvPixelStride] = uvBuffer[i]
+            nv21[ySize + uSize + i / uvPixelStride] = uvBuffer[uSize + i]
+        }
+    }
+
+    val yuvImage = YuvImage(nv21, ImageFormat.NV21, this.width, this.height, null)
+    val out = ByteArrayOutputStream()
+    yuvImage.compressToJpeg(Rect(0, 0, this.width, this.height), 75, out)
+    val imageBytes = out.toByteArray()
+    return BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
 }
 
 // Enhanced surface detection status component
