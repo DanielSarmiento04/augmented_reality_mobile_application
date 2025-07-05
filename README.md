@@ -275,6 +275,6 @@ This project is developed as part of academic research at Universidad Industrial
 - **Manuel Ayala:** jose2195529@correo.uis.edu.co
 
 **Institution:** Universidad Industrial de Santander (UIS)  
-**Program:** Computer Engineering  
+**Program:** Mechanical Engineering
 **Project Type:** Augmented Reality & AI Research
 
