@@ -21,6 +21,7 @@ import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.*
 import com.example.augmented_mobile_application.BuildConfig
+import com.example.augmented_mobile_application.ai.YOLOModelConstants
 
 /**
  * YOLOv11 Object Detector for Android
@@ -34,13 +35,13 @@ class YOLO11Detector(
     private val useGPU: Boolean = true
 ) {
     companion object {
-        const val CONFIDENCE_THRESHOLD = 0.4f
-        const val IOU_THRESHOLD = 0.45f
+        const val CONFIDENCE_THRESHOLD = YOLOModelConstants.CONFIDENCE_THRESHOLD
+        const val IOU_THRESHOLD = YOLOModelConstants.IOU_THRESHOLD
         private const val TAG = "YOLO11Detector"
-        private const val MAX_DETECTIONS = 300
-        const val PUMP_CLASS_ID = 81
-        const val CUP_CLASS_ID = 41
-        const val PIPE_CLASS_ID = 82
+        private const val MAX_DETECTIONS = YOLOModelConstants.MAX_DETECTIONS
+        const val PUMP_CLASS_ID = YOLOModelConstants.PUMP_CLASS_ID
+        const val CUP_CLASS_ID = YOLOModelConstants.CUP_CLASS_ID
+        const val PIPE_CLASS_ID = YOLOModelConstants.PIPE_CLASS_ID
     }
 
     // Core components
@@ -51,8 +52,8 @@ class YOLO11Detector(
     private var nnApiDelegate: NnApiDelegate? = null
 
     // Model properties
-    private var inputWidth: Int = 640
-    private var inputHeight: Int = 640
+    private var inputWidth: Int = YOLOModelConstants.INPUT_WIDTH
+    private var inputHeight: Int = YOLOModelConstants.INPUT_HEIGHT
     private var isQuantized: Boolean = false
     private var numClasses: Int = 0
 

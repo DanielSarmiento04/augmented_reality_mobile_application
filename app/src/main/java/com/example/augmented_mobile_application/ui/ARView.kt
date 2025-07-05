@@ -64,6 +64,7 @@ import java.text.DecimalFormat
 import com.example.augmented_mobile_application.ai.YOLO11Detector
 import com.example.augmented_mobile_application.ai.DetectionPipeline
 import com.example.augmented_mobile_application.ai.DetectionValidator
+import com.example.augmented_mobile_application.ai.YOLOModelConstants
 import com.example.augmented_mobile_application.ar.ModelPositioningManager
 import com.example.augmented_mobile_application.ar.ARCoreStateManager
 import com.example.augmented_mobile_application.ar.SurfaceDetectionManager
@@ -88,7 +89,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import androidx.compose.runtime.derivedStateOf
 
 private const val TAG = "ARView"
-private const val TARGET_CLASS_ID = 41  // Changed from 82 to 41 (cup) as requested
+private const val TARGET_CLASS_ID = YOLOModelConstants.TARGET_CLASS_ID
 
 @Composable
 fun rememberYoloDetector(context: Context): YOLO11Detector? {
@@ -118,7 +119,11 @@ fun rememberYoloDetector(context: Context): YOLO11Detector? {
                 
                 // Run comprehensive validation with a test image
                 try {
-                    val testBitmap = Bitmap.createBitmap(640, 640, Bitmap.Config.ARGB_8888)
+                    val testBitmap = Bitmap.createBitmap(
+                        YOLOModelConstants.INPUT_WIDTH, 
+                        YOLOModelConstants.INPUT_HEIGHT, 
+                        Bitmap.Config.ARGB_8888
+                    )
                     val validationReport = DetectionValidator.validatePipeline(it, testBitmap)
                     if (!validationReport.isValid) {
                         Log.e(TAG, "Validation failed! Check logs for details.")

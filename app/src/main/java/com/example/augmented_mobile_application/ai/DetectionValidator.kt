@@ -7,6 +7,9 @@ import org.opencv.core.CvType
 import org.tensorflow.lite.Interpreter
 import java.nio.ByteBuffer
 
+// Import constants for consistent model configuration
+import com.example.augmented_mobile_application.ai.YOLOModelConstants
+
 /**
  * Comprehensive validation and debugging utility for YOLO11 detection pipeline.
  * Helps identify common issues that prevent successful object detection.
@@ -106,8 +109,8 @@ object DetectionValidator {
                 suggestions.add("Ensure proper color conversion (BGR/RGB)")
             }
             
-            if (mat.cols() != 640 || mat.rows() != 640) {
-                warnings.add("Processed Mat size is ${mat.cols()}x${mat.rows()}, expected 640x640")
+            if (mat.cols() != YOLOModelConstants.INPUT_WIDTH || mat.rows() != YOLOModelConstants.INPUT_HEIGHT) {
+                warnings.add("Processed Mat size is ${mat.cols()}x${mat.rows()}, expected ${YOLOModelConstants.INPUT_WIDTH}x${YOLOModelConstants.INPUT_HEIGHT}")
                 suggestions.add("Verify letterbox resizing is working correctly")
             }
         }

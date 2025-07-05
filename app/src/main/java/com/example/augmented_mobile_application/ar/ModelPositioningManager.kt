@@ -9,6 +9,7 @@ import io.github.sceneview.math.Rotation
 import io.github.sceneview.math.Scale
 import io.github.sceneview.node.ModelNode
 import com.example.augmented_mobile_application.ai.YOLO11Detector
+import com.example.augmented_mobile_application.ai.YOLOModelConstants
 import kotlin.math.*
 
 /**
@@ -257,7 +258,7 @@ class ModelPositioningManager(
      */
     private fun calculateModelScale(detection: YOLO11Detector.Detection): Float {
         val boxArea = detection.box.width.toFloat() * detection.box.height.toFloat()
-        val normalizedArea = boxArea / (640f * 640f) // Assuming 640x640 input
+        val normalizedArea = boxArea / (YOLOModelConstants.INPUT_WIDTH.toFloat() * YOLOModelConstants.INPUT_HEIGHT.toFloat())
         
         // Scale based on detection size - larger detections get larger models
         val scaleMultiplier = sqrt(normalizedArea).coerceIn(0.5f, 2.0f)
@@ -269,7 +270,7 @@ class ModelPositioningManager(
      */
     private fun estimateDistanceFromBoxSize(boxArea: Float): Float {
         // Larger boxes suggest closer objects
-        val normalizedArea = boxArea / (640f * 640f)
+        val normalizedArea = boxArea / (YOLOModelConstants.INPUT_WIDTH.toFloat() * YOLOModelConstants.INPUT_HEIGHT.toFloat())
         val distance = (1.0f / sqrt(normalizedArea)).coerceIn(MIN_DISTANCE_TO_CAMERA, MAX_DISTANCE_TO_CAMERA)
         return distance
     }
