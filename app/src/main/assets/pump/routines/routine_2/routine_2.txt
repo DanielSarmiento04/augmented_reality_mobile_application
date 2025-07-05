@@ -1,12 +1,10 @@
-Rutina de Lubricación de Rodamientos
-
-1. Sitúa el destornillador de pala en la primera esquina de la tapa delantera.
-2. Gira suavemente el destornillador  para desatornillar el tornillo.
-3. Repite el giro en cada una de las cuatro esquinas de la tapa delantera.
-4. Una vez desatornillado la tapa, deslízala hacia atrás a lo largo del eje de la bomba para retirarla.
-5. Retira con cuidado los componentes internos siguiendo su orden de desmontaje.
-6. Extrae el rodamiento.
-7. Prepara el sistema de lubricación y haga caer el líquido viscoso sobre el rodamiento y el eje.
-8. Tras la aplicación del lubricante, recoloca primero los rodamientos en su sitio original.
-9. Vuelve a montar los componentes internos en orden inverso al desmontaje.
-10. Desliza la tapa delantera de regreso a su posición y atornilla los tornillos para asegurarla.
+Sitúa el destornillador de pala en la primera esquina de la tapa delantera.
+Gira suavemente el destornillador  para desatornillar el tornillo.
+Repite el giro en cada una de las cuatro esquinas de la tapa delantera.
+Una vez desatornillado la tapa, deslízala hacia atrás a lo largo del eje de la bomba para retirarla.
+Retira con cuidado los componentes internos siguiendo su orden de desmontaje.
+Extrae el rodamiento.
+Prepara el sistema de lubricación y haga caer el líquido viscoso sobre el rodamiento y el eje.
+Tras la aplicación del lubricante, recoloca primero los rodamientos en su sitio original.
+Vuelve a montar los componentes internos en orden inverso al desmontaje.
+1Desliza la tapa delantera de regreso a su posición y atornilla los tornillos para asegurarla.
