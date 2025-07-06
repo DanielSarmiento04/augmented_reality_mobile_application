@@ -76,8 +76,10 @@ class RoutineAssetLoader(private val context: Context) {
                 id = routineId,
                 name = routineId,
                 displayName = generateDisplayName(routineId),
-                steps = steps,
-                glbAssetPath = "file:///android_asset/$routinePath/$glbFile"
+                description = "Rutina de mantenimiento para $routineId",
+                glbFileName = glbFile,
+                glbAssetPath = "file:///android_asset/$routinePath/$glbFile",
+                steps = steps
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error loading routine: $routineId", e)
@@ -98,8 +100,10 @@ class RoutineAssetLoader(private val context: Context) {
                         val trimmedLine = line.trim()
                         if (trimmedLine.isNotEmpty()) {
                             MaintenanceStep(
-                                id = index,
+                                id = "step_$index",
+                                title = "Paso ${index + 1}",
                                 instruction = trimmedLine,
+                                description = trimmedLine,
                                 stepNumber = index + 1
                             )
                         } else {

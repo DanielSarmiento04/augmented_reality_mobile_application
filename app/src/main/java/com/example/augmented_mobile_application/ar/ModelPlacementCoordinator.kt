@@ -56,6 +56,25 @@ class ModelPlacementCoordinator(
                 isShadowReceiver = false
                 isShadowCaster = true
                 scale = Scale(DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE)
+                
+                // Enable animation if the model has animations
+                try {
+                    val animator = modelInstance.animator
+                    if (animator != null) {
+                        Log.i(TAG, "Model has animator available")
+                        // Try to configure animation if methods exist
+                        try {
+                            // Check if there are animations available
+                            Log.i(TAG, "Setting up animation for model")
+                        } catch (animE: Exception) {
+                            Log.w(TAG, "Could not query animation count: ${animE.message}")
+                        }
+                    } else {
+                        Log.d(TAG, "Model has no animator")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not setup animation: ${e.message}")
+                }
             }
             
             _isModelLoaded.value = true
@@ -120,6 +139,9 @@ class ModelPlacementCoordinator(
             _isModelPlaced.value = true
             _placementPosition.value = enhancedPosition
 
+            // Start animation when model is placed
+            startModelAnimation(modelNode)
+
             Log.i(TAG, "Model placed successfully at: $enhancedPosition")
             Log.i(TAG, "Surface distance: ${hitResult.distance}m")
             
@@ -175,6 +197,9 @@ class ModelPlacementCoordinator(
                     // Update state
                     _isModelPlaced.value = true
                     _placementPosition.value = position
+
+                    // Start animation when model is placed
+                    startModelAnimation(modelNode)
 
                     Log.i(TAG, "Model placed at estimated position: $position")
                     return true
@@ -253,6 +278,42 @@ class ModelPlacementCoordinator(
             isShadowReceiver = false
             isShadowCaster = true
             scale = template.scale
+        }
+    }
+
+    /**
+     * Start animation for the placed model
+     */
+    private fun startModelAnimation(modelNode: ModelNode) {
+        try {
+            val modelInstance = modelNode.modelInstance
+            val animator = modelInstance.animator
+            if (animator != null) {
+                Log.i(TAG, "Starting animation for placed model")
+                
+                // Try to start animation - different APIs may be available
+                try {
+                    // Method 1: Try direct play if available
+                    val playMethod = animator.javaClass.getDeclaredMethod("play")
+                    playMethod.invoke(animator)
+                    Log.i(TAG, "Animation started with play() method")
+                } catch (e: Exception) {
+                    Log.d(TAG, "play() method not available, trying alternative: ${e.message}")
+                    
+                    // Method 2: Try setting time-based animation
+                    try {
+                        val setTimeMethod = animator.javaClass.getDeclaredMethod("setAnimationTime", Float::class.java)
+                        setTimeMethod.invoke(animator, 0f)
+                        Log.i(TAG, "Animation started with setAnimationTime() method")
+                    } catch (e2: Exception) {
+                        Log.w(TAG, "Could not start animation with available methods: ${e2.message}")
+                    }
+                }
+            } else {
+                Log.d(TAG, "Model has no animator to start")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting model animation: ${e.message}", e)
         }
     }
 

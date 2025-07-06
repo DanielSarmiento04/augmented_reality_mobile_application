@@ -27,6 +27,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.augmented_mobile_application.ui.theme.DarkGreen
 import androidx.navigation.NavHostController
+import com.example.augmented_mobile_application.viewmodel.SharedRoutineViewModel
+import com.example.augmented_mobile_application.ui.components.ARRoutineTopBar
+import com.example.augmented_mobile_application.ui.components.ARStepInstructionCard
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageFormat
@@ -90,6 +93,48 @@ import androidx.compose.runtime.derivedStateOf
 
 private const val TAG = "ARView"
 private const val TARGET_CLASS_ID = YOLOModelConstants.TARGET_CLASS_ID
+
+// Helper function to create default routine when none is provided
+fun createDefaultRoutine(): com.example.augmented_mobile_application.model.MaintenanceRoutine {
+    return com.example.augmented_mobile_application.model.MaintenanceRoutine(
+        id = "default_pump_maintenance",
+        name = "default_pump_maintenance",
+        displayName = "Mantenimiento Básico de Bomba",
+        description = "Rutina básica de mantenimiento para bombas industriales",
+        glbFileName = "pump.glb",
+        glbAssetPath = "pump/pump.glb",
+        steps = listOf(
+            com.example.augmented_mobile_application.model.MaintenanceStep(
+                id = "step_1",
+                title = "Verificación inicial",
+                instruction = "Verificar que la bomba esté apagada",
+                description = "Asegúrese de que la bomba esté completamente apagada antes de continuar",
+                stepNumber = 1
+            ),
+            com.example.augmented_mobile_application.model.MaintenanceStep(
+                id = "step_2", 
+                title = "Inspección general",
+                instruction = "Inspeccionar el estado general de la bomba",
+                description = "Revisar visualmente el estado de la bomba",
+                stepNumber = 2
+            ),
+            com.example.augmented_mobile_application.model.MaintenanceStep(
+                id = "step_3",
+                title = "Conexiones eléctricas", 
+                instruction = "Comprobar conexiones eléctricas",
+                description = "Verificar que todas las conexiones estén seguras",
+                stepNumber = 3
+            ),
+            com.example.augmented_mobile_application.model.MaintenanceStep(
+                id = "step_4",
+                title = "Estado de válvulas",
+                instruction = "Verificar el estado de las válvulas", 
+                description = "Comprobar el funcionamiento de todas las válvulas",
+                stepNumber = 4
+            )
+        )
+    )
+}
 
 @Composable
 fun rememberYoloDetector(context: Context): YOLO11Detector? {
@@ -172,6 +217,16 @@ fun ARView(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    
+    // Shared ViewModel for routine state
+    val sharedViewModel = remember { SharedRoutineViewModel.getInstance() }
+    val currentRoutine by sharedViewModel.currentRoutine.collectAsState()
+    val currentStepIndex by sharedViewModel.currentStepIndex.collectAsState()
+    val isMaintenanceActive by sharedViewModel.isMaintenanceActive.collectAsState()
+    
+    // Determine GLB file from routine or use default
+    val glbFileName = currentRoutine?.glbFileName ?: "pump.glb"
+    val glbPath = "pump/$glbFileName"
     
     // ARCore availability state
     var arCoreAvailability by remember { mutableStateOf<ArCoreApk.Availability?>(null) }
@@ -307,6 +362,14 @@ fun ARView(
     var instructionStep by remember { mutableStateOf(0) }
     var maintenanceStarted by remember { mutableStateOf(false) }
     
+    // Initialize maintenance from shared state
+    LaunchedEffect(isMaintenanceActive) {
+        if (isMaintenanceActive && !maintenanceStarted) {
+            maintenanceStarted = true
+            instructionStep = maxOf(1, currentStepIndex + 1) // Convert to 1-based indexing
+        }
+    }
+    
     // Surface detection state
     var surfacesDetected by remember { mutableStateOf(0) }
     var isPlacementReady by remember { mutableStateOf(false) }
@@ -330,7 +393,12 @@ fun ARView(
     val trackingFailureReason by arStateManager.trackingFailureReason.collectAsState()
     var modelPlaced by remember { mutableStateOf(false) }
 
-    val instructions = listOf(
+    // Use routine steps if available, otherwise use default instructions
+    val instructions = currentRoutine?.let { routine ->
+        listOf("Mueva lentamente el dispositivo para detectar superficies planas") + 
+        routine.steps.map { it.instruction } + 
+        listOf("Mantenimiento completado con éxito")
+    } ?: listOf(
         "Mueva lentamente el dispositivo para detectar superficies planas",
         "Verificar que la bomba esté apagada",
         "Inspeccionar el estado general de la bomba (Detección activa)",
@@ -348,15 +416,15 @@ fun ARView(
     LaunchedEffect(arSceneViewRef.value) {
         arSceneViewRef.value?.let { sceneView ->
             modelPlacementCoordinator.value = ModelPlacementCoordinator(sceneView).also { coordinator ->
-                // Load the 3D model
+                // Load the 3D model - use routine-specific GLB or default
                 scope.launch {
-                    val modelLoaded = coordinator.loadModel("pump/pump.glb")
+                    val modelLoaded = coordinator.loadModel(glbPath)
                     if (modelLoaded) {
                         isLoadingModel = false
-                        Log.i(TAG, "3D model loaded successfully via ModelPlacementCoordinator")
+                        Log.i(TAG, "3D model loaded successfully: $glbPath")
                     } else {
                         isLoadingModel = false
-                        Log.e(TAG, "Failed to load 3D model")
+                        Log.e(TAG, "Failed to load 3D model: $glbPath")
                     }
                 }
             }
@@ -459,6 +527,25 @@ fun ARView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        // AR Camera View
+        Column(modifier = Modifier.fillMaxSize()) {
+            // AR Routine Top Bar
+            if (isMaintenanceActive) {
+                ARRoutineTopBar(
+                    onBack = {
+                        sharedViewModel.clearRoutine()
+                        navController.navigateUp()
+                    },
+                    sharedViewModel = sharedViewModel
+                )
+            }
+            
+            // AR Scene View
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .weight(1f)
+            ) {
         // Stable AndroidView with minimal recomposition triggers
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -542,7 +629,7 @@ fun ARView(
                                             try {
                                                 // CRITICAL: 200ms timeout for total processing
                                                 withTimeout(200) { 
-                                                    val bitmap: Bitmap = image.toBitmapOptimized()
+                                                    val bitmap: Bitmap = image.toBitmap()
                                                     detectionPipeline.submitFrame(bitmap)
                                                     bitmap.recycle() // CRITICAL: Explicit cleanup
                                                 }
@@ -602,18 +689,22 @@ fun ARView(
                                             if (bestHit != null) {
                                                 // Use ModelPlacementCoordinator for enhanced placement
                                                 val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(bestHit)
-                                                
-                                                if (placementSuccess == true) {
-                                                    modelPlaced = true
-                                                    instructionStep = maxOf(1, instructionStep)
-                                                    showPlacementIndicator = false
-                                                    
-                                                    // Store reference for legacy compatibility
-                                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
-                                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
-                                                    
-                                                    Log.i(TAG, "Model placed successfully using enhanced placement at distance: ${bestHit.distance}m")
-                                                } else {
+                                                                 if (placementSuccess == true) {
+                                    modelPlaced = true
+                                    instructionStep = maxOf(1, instructionStep)
+                                    showPlacementIndicator = false
+                                    
+                                    // Update shared state when model is placed
+                                    if (!isMaintenanceActive) {
+                                        sharedViewModel.setCurrentRoutine(currentRoutine ?: createDefaultRoutine())
+                                    }
+                                    
+                                    // Store reference for legacy compatibility
+                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
+                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
+                                    
+                                    Log.i(TAG, "Model placed successfully using enhanced placement at distance: ${bestHit.distance}m")
+                                } else {
                                                     Log.e(TAG, "Failed to place model using ModelPlacementCoordinator")
                                                     showPlacementIndicator = false
                                                 }
@@ -623,17 +714,21 @@ fun ARView(
                                                 val fallbackSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
                                                     event.x, event.y, 1.5f
                                                 )
-                                                
-                                                if (fallbackSuccess == true) {
-                                                    modelPlaced = true
-                                                    instructionStep = maxOf(1, instructionStep)
-                                                    showPlacementIndicator = false
-                                                    
-                                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
-                                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
-                                                    
-                                                    Log.i(TAG, "Model placed using estimated position fallback")
-                                                } else {
+                                                                 if (fallbackSuccess == true) {
+                                    modelPlaced = true
+                                    instructionStep = maxOf(1, instructionStep)
+                                    showPlacementIndicator = false
+                                    
+                                    // Update shared state when model is placed
+                                    if (!isMaintenanceActive) {
+                                        sharedViewModel.setCurrentRoutine(currentRoutine ?: createDefaultRoutine())
+                                    }
+                                    
+                                    anchorNodeRef.value = modelPlacementCoordinator.value?.getCurrentAnchorNode()
+                                    modelNodeRef.value = modelPlacementCoordinator.value?.getCurrentModelNode()
+                                    
+                                    Log.i(TAG, "Model placed using estimated position fallback")
+                                } else {
                                                     // Auto-hide indicator after failed placement
                                                     scope.launch {
                                                         kotlinx.coroutines.delay(1000)
@@ -676,45 +771,60 @@ fun ARView(
             isTargetDetected = isTargetDetected,
             modifier = Modifier.fillMaxSize()
         )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            Card(
+        
+        // AR Step Instruction Card (overlay)
+        if (isMaintenanceActive && modelPlaced) {
+            ARStepInstructionCard(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White.copy(alpha = 0.9f)
-                )
+                    .align(Alignment.BottomCenter)
+                    .padding(16.dp),
+                sharedViewModel = sharedViewModel
+            )
+        }
+        
+        // Legacy UI for non-routine mode or pre-placement state
+        if (!isMaintenanceActive || !modelPlaced) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = machine_selected,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = DarkGreen
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White.copy(alpha = 0.9f)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = instructions[instructionStep],
-                        fontSize = 16.sp,
-                        color = Color.Black
-                    )
-                    
-                    // Enhanced surface detection feedback
-                    if (maintenanceStarted && !modelPlaced) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        SurfaceDetectionStatus(
-                            trackingState = trackingState,
-                            surfacesDetected = surfacesDetected,
-                            isPlacementReady = isPlacementReady,
-                            detectionQuality = surfaceDetectionManager.getDetectionQuality()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = if (isMaintenanceActive) sharedViewModel.routineTitle else machine_selected,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = DarkGreen
                         )
-                    }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (isMaintenanceActive) 
+                                sharedViewModel.currentStepInstruction 
+                            else 
+                                instructions[instructionStep],
+                            fontSize = 16.sp,
+                            color = Color.Black
+                        )
+                        
+                        // Enhanced surface detection feedback
+                        if ((maintenanceStarted || isMaintenanceActive) && !modelPlaced) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SurfaceDetectionStatus(
+                                trackingState = trackingState,
+                                surfacesDetected = surfacesDetected,
+                                isPlacementReady = isPlacementReady,
+                                detectionQuality = surfaceDetectionManager.getDetectionQuality()
+                            )
+                        }
                     
                     // Debug status card
                     if (BuildConfig.DEBUG) {
@@ -822,7 +932,8 @@ fun ARView(
                     .padding(bottom = 16.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                if (modelPlaced) {
+                if (modelPlaced && !isMaintenanceActive) {
+                    // Legacy navigation for non-routine mode
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -831,10 +942,9 @@ fun ARView(
                             onClick = {
                                 if (instructionStep > 1) {
                                     instructionStep--
-                                    // Detection state is now managed by DetectionPipeline
                                 }
                             },
-                            enabled = maintenanceStarted && instructionStep > 1,
+                            enabled = instructionStep > 1,
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = DarkGreen,
                                 disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
@@ -847,12 +957,10 @@ fun ARView(
                             onClick = {
                                 if (instructionStep < instructions.size - 1) {
                                     instructionStep++
-                                    // Detection state is now managed by DetectionPipeline
                                 } else {
                                     maintenanceStarted = false
                                     modelPlaced = false
                                     instructionStep = 0
-                                    // Enhanced cleanup using ModelPlacementCoordinator
                                     modelPlacementCoordinator.value?.removeCurrentModel()
                                     surfaceDetectionManager.reset()
                                     anchorNodeRef.value = null
@@ -869,7 +977,7 @@ fun ARView(
                             Text(text = if (instructionStep < instructions.size - 1) "Siguiente" else "Finalizar")
                         }
                     }
-                } else {
+                } else if (!modelPlaced) {
                     Text(
                         text = when {
                             isLoadingModel -> "Cargando modelo..."
@@ -891,13 +999,12 @@ fun ARView(
 
                     Button(
                         onClick = {
-                            if (!maintenanceStarted) {
+                            if (!maintenanceStarted && !isMaintenanceActive) {
                                 maintenanceStarted = true
                                 instructionStep = 1
-                                // Detection state is managed by DetectionPipeline lifecycle
                             }
                         },
-                        enabled = !isLoadingModel && !maintenanceStarted,
+                        enabled = !isLoadingModel && !maintenanceStarted && !isMaintenanceActive,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = DarkGreen,
                             disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
@@ -915,7 +1022,9 @@ fun ARView(
                 }
             }
         }
-    }
+            } // Close AR Scene View Box
+        } // Close Column
+    } // Close main Box
 }
 
 // Helper composable to draw detections on a Canvas overlay
@@ -1138,7 +1247,7 @@ fun Image.toBitmap(): Bitmap {
 }
 
 // CRITICAL: Optimized image conversion extensions
-private fun Image.toBitmapOptimized(): Bitmap {
+fun Image.toBitmapOptimized(): Bitmap {
     val planes = this.planes
     val yBuffer = planes[0].buffer
     val uBuffer = planes[1].buffer

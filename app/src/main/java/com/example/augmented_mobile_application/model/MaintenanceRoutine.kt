@@ -7,16 +7,20 @@ data class MaintenanceRoutine(
     val id: String,
     val name: String,
     val displayName: String,
-    val steps: List<MaintenanceStep>,
-    val glbAssetPath: String
+    val description: String = "",
+    val glbFileName: String,
+    val glbAssetPath: String,
+    val steps: List<MaintenanceStep>
 )
 
 /**
  * Data class representing a single step in a maintenance routine
  */
 data class MaintenanceStep(
-    val id: Int,
+    val id: String,
+    val title: String,
     val instruction: String,
+    val description: String,
     val stepNumber: Int
 )
 
