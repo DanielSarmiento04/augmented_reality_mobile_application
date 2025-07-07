@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,9 +33,9 @@ import com.example.augmented_mobile_application.model.AuthState
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
 import com.example.augmented_mobile_application.model.MaintenanceStep
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ViewInAr
@@ -415,7 +416,7 @@ fun RoutineDetailsView(
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Volver",
                     tint = DarkGreen
                 )
@@ -449,7 +450,7 @@ fun RoutineDetailsView(
         // Progress indicator
         routineProgress?.let { progress ->
             LinearProgressIndicator(
-                progress = progress.progressPercentage,
+                progress = { progress.progressPercentage },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 16.dp),
@@ -935,7 +936,7 @@ fun RoutineStepDetailView(
                         }
                     ) {
                         Icon(
-                            Icons.Default.ArrowBack,
+                            Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Volver",
                             tint = Color.White
                         )
@@ -1088,7 +1089,7 @@ fun RoutineStepDetailView(
                         enabled = pagerState.currentPage > 0,
                         colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
                     ) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Anterior")
                     }
@@ -1107,7 +1108,7 @@ fun RoutineStepDetailView(
                     ) {
                         Text("Siguiente")
                         Spacer(modifier = Modifier.width(4.dp))
-                        Icon(Icons.Default.ArrowForward, contentDescription = null)
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
                     }
                 }
 
