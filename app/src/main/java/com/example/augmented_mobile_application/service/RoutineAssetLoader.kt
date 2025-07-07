@@ -64,7 +64,7 @@ class RoutineAssetLoader(private val context: Context) {
                 return@withContext null
             }
             
-            // Load steps from text file
+            // Load steps from text file with better error handling
             val steps = loadStepsFromFile("$routinePath/$txtFile")
             
             if (steps.isEmpty()) {
@@ -72,13 +72,16 @@ class RoutineAssetLoader(private val context: Context) {
                 return@withContext null
             }
             
+            // Generate asset path for GLB file compatible with SceneView
+            val glbAssetPath = "$routinePath/$glbFile"
+            
             MaintenanceRoutine(
                 id = routineId,
                 name = routineId,
                 displayName = generateDisplayName(routineId),
-                description = "Rutina de mantenimiento para $routineId",
+                description = generateDescription(routineId, steps.size),
                 glbFileName = glbFile,
-                glbAssetPath = "file:///android_asset/$routinePath/$glbFile",
+                glbAssetPath = glbAssetPath, // SceneView compatible path
                 steps = steps
             )
         } catch (e: Exception) {
@@ -134,6 +137,22 @@ class RoutineAssetLoader(private val context: Context) {
                 "Rutina $routineNumber"
             }
         }
+    }
+
+    /**
+     * Generates a detailed description for a routine
+     * @param routineId The routine identifier
+     * @param stepCount Number of steps in the routine
+     * @return Detailed description in Spanish
+     */
+    private fun generateDescription(routineId: String, stepCount: Int): String {
+        val baseDescription = when (routineId) {
+            "routine_1" -> "Procedimiento de mantenimiento diario para bomba centrífuga"
+            "routine_2" -> "Procedimiento de mantenimiento mensual para bomba centrífuga"
+            "routine_3" -> "Procedimiento de mantenimiento semestral para bomba centrífuga"
+            else -> "Procedimiento de mantenimiento para bomba centrífuga"
+        }
+        return "$baseDescription ($stepCount pasos)"
     }
 
     /**

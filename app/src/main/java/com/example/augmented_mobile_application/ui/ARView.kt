@@ -69,6 +69,7 @@ import com.example.augmented_mobile_application.ar.ModelPositioningManager
 import com.example.augmented_mobile_application.ar.ARCoreStateManager
 import com.example.augmented_mobile_application.ar.SurfaceDetectionManager
 import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
+import com.example.augmented_mobile_application.ar.ModelCacheManager
 import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.ResourceExhaustedException
 import java.util.concurrent.TimeUnit
@@ -168,10 +169,23 @@ fun rememberDetectionPipeline(detector: YOLO11Detector?): DetectionPipeline? {
 @Composable
 fun ARView(
     machine_selected: String,
-    navController: NavHostController
+    navController: NavHostController,
+    glbPath: String? = null,
+    routineId: String? = null
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    
+    // Determine the model path - use provided glbPath or default
+    val modelPath = glbPath ?: "pump/pump.glb"
+    
+    // Log the model being loaded for debugging
+    LaunchedEffect(modelPath) {
+        Log.i(TAG, "ARView initialized with model path: $modelPath")
+        routineId?.let { 
+            Log.i(TAG, "ARView initialized with routine ID: $it")
+        }
+    }
     
     // ARCore availability state
     var arCoreAvailability by remember { mutableStateOf<ArCoreApk.Availability?>(null) }
@@ -350,7 +364,7 @@ fun ARView(
             modelPlacementCoordinator.value = ModelPlacementCoordinator(sceneView).also { coordinator ->
                 // Load the 3D model
                 scope.launch {
-                    val modelLoaded = coordinator.loadModel("pump/pump.glb")
+                    val modelLoaded = coordinator.loadModel(modelPath)
                     if (modelLoaded) {
                         isLoadingModel = false
                         Log.i(TAG, "3D model loaded successfully via ModelPlacementCoordinator")
@@ -456,6 +470,30 @@ fun ARView(
                 Log.e(TAG, "Error disposing ARSceneView: ${e.message}", e)
             }
         }
+    }
+
+    // Enhanced lifecycle management for model cleanup
+    DisposableEffect(modelPath) {
+        onDispose {
+            Log.i(TAG, "ARView disposing - cleaning up models for path: $modelPath")
+            // Clear the specific model from cache when switching routines
+            if (modelPath != "pump/pump.glb") {
+                ModelCacheManager.getInstance().clearModel(modelPath)
+            }
+        }
+    }
+    
+    // Handle model changes when routine changes
+    LaunchedEffect(modelPath) {
+        // Clear any existing model placement when changing routines
+        modelPlacementCoordinator.value?.removeCurrentModel()
+        modelPlaced = false
+        maintenanceStarted = false
+        instructionStep = 0
+        anchorNodeRef.value = null
+        modelNodeRef.value = null
+        
+        Log.i(TAG, "Model path changed to: $modelPath, reloading model")
     }
 
     Box(modifier = Modifier.fillMaxSize()) {

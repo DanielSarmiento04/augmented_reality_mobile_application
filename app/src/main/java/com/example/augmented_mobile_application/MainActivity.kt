@@ -12,9 +12,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.example.augmented_mobile_application.core.ResourcePool
 import com.example.augmented_mobile_application.ui.LoginView
 import com.example.augmented_mobile_application.ui.UserContentView
@@ -146,12 +148,32 @@ fun MainAppContent(userViewModel: UserViewModel, manualViewModel: ManualViewMode
                 )
             }
 
-            // AR view with corrected implementation
-            composable(route = "arView/{machineName}") { backStackEntry ->
+            // AR view with dynamic GLB path support
+            composable(
+                route = "arView/{machineName}?glbPath={glbPath}&routineId={routineId}",
+                arguments = listOf(
+                    navArgument("machineName") { type = NavType.StringType },
+                    navArgument("glbPath") { 
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    },
+                    navArgument("routineId") { 
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    }
+                )
+            ) { backStackEntry ->
                 val machineName = backStackEntry.arguments?.getString("machineName") ?: "Bomba Centrifuga"
+                val glbPath = backStackEntry.arguments?.getString("glbPath")
+                val routineId = backStackEntry.arguments?.getString("routineId")
+                
                 ARView(
                     machine_selected = machineName,
-                    navController = navController
+                    navController = navController,
+                    glbPath = glbPath,
+                    routineId = routineId
                 )
             }
         }

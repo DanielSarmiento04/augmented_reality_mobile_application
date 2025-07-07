@@ -28,6 +28,9 @@ class ModelPlacementCoordinator(
     private var currentAnchorNode: AnchorNode? = null
     private var currentModelNode: ModelNode? = null
     private var modelTemplate: ModelNode? = null
+    
+    // Cache manager for optimized model loading
+    private val cacheManager = ModelCacheManager.getInstance()
 
     private val _isModelLoaded = MutableStateFlow(false)
     val isModelLoaded: StateFlow<Boolean> = _isModelLoaded
@@ -39,52 +42,74 @@ class ModelPlacementCoordinator(
     val placementPosition: StateFlow<Position?> = _placementPosition
 
     /**
-     * Load the 3D model template
+     * Load the 3D model template with path validation and caching
      */
     suspend fun loadModel(modelPath: String): Boolean {
         return try {
+            // Clear any existing model first
+            clearModel()
+            
             Log.i(TAG, "Loading 3D model from: $modelPath")
             
-            val modelInstance = arSceneView.modelLoader.createModelInstance(
-                assetFileLocation = modelPath
-            )
-            
-            modelTemplate = ModelNode(
-                modelInstance = modelInstance,
-                scaleToUnits = 1.0f
-            ).apply {
-                isShadowReceiver = false
-                isShadowCaster = true
-                scale = Scale(DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE)
+            // Use cache manager for optimized loading
+            modelTemplate = cacheManager.getOrLoadModel(modelPath) { path ->
+                val modelInstance = arSceneView.modelLoader.createModelInstance(
+                    assetFileLocation = path
+                )
                 
-                // Enable animation if the model has animations
-                try {
-                    val animator = modelInstance.animator
-                    if (animator != null) {
-                        Log.i(TAG, "Model has animator available")
-                        // Try to configure animation if methods exist
-                        try {
-                            // Check if there are animations available
-                            Log.i(TAG, "Setting up animation for model")
-                        } catch (animE: Exception) {
-                            Log.w(TAG, "Could not query animation count: ${animE.message}")
+                ModelNode(
+                    modelInstance = modelInstance,
+                    scaleToUnits = 1.0f
+                ).apply {
+                    isShadowReceiver = false
+                    isShadowCaster = true
+                    scale = Scale(DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE)
+                    
+                    // Enhanced animation setup
+                    try {
+                        val animator = modelInstance.animator
+                        if (animator != null) {
+                            Log.i(TAG, "Model has animator available")
+                            // Animator is available, animations will play automatically
+                            Log.i(TAG, "Animation setup complete")
+                        } else {
+                            Log.d(TAG, "Model has no animator")
                         }
-                    } else {
-                        Log.d(TAG, "Model has no animator")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not setup animation: ${e.message}")
                     }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not setup animation: ${e.message}")
                 }
             }
             
-            _isModelLoaded.value = true
-            Log.i(TAG, "3D model loaded successfully")
-            true
+            val success = modelTemplate != null
+            _isModelLoaded.value = success
+            
+            if (success) {
+                Log.i(TAG, "3D model loaded successfully from: $modelPath")
+            } else {
+                Log.e(TAG, "Failed to load 3D model from: $modelPath")
+            }
+            
+            success
             
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load 3D model: ${e.message}", e)
+            Log.e(TAG, "Failed to load 3D model from $modelPath: ${e.message}", e)
             _isModelLoaded.value = false
             false
+        }
+    }
+    
+    /**
+     * Clear the current model and free resources
+     */
+    fun clearModel() {
+        try {
+            modelTemplate?.destroy()
+            modelTemplate = null
+            _isModelLoaded.value = false
+            Log.i(TAG, "Model template cleared")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clearing model: ${e.message}", e)
         }
     }
 

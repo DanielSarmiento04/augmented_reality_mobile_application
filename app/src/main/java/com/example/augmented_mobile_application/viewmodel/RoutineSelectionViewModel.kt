@@ -117,22 +117,33 @@ class RoutineSelectionViewModel(context: Context) : ViewModel() {
     }
     
     /**
-     * Starts AR session with selected routine
+     * Shows the step details view for the selected routine
+     */
+    fun showStepDetails() {
+        _showStepDetails.value = true
+    }
+    
+    /**
+     * Shows the routine selection view
+     */
+    fun showRoutineSelection() {
+        _showStepDetails.value = false
+        _selectedRoutine.value = null
+        _currentStepIndex.value = 0
+    }
+    
+    /**
+     * Starts the AR maintenance session with the selected routine's GLB
      */
     fun startMaintenanceAR() {
-        val routine = _selectedRoutine.value ?: return
-        viewModelScope.launch {
-            // Validate GLB file exists before starting AR
-            if (repository.validateRoutineGlb(routine.id)) {
-                _arSessionRequested.value = routine.glbAssetPath
-            } else {
-                setError("Archivo 3D no encontrado para ${routine.displayName}")
-            }
+        val routine = _selectedRoutine.value
+        if (routine != null) {
+            _arSessionRequested.value = routine.glbAssetPath
         }
     }
     
     /**
-     * Clears AR session request
+     * Clears the AR session request
      */
     fun clearArSessionRequest() {
         _arSessionRequested.value = null
