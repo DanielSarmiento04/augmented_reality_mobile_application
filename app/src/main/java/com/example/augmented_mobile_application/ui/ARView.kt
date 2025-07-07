@@ -30,6 +30,7 @@ import com.google.ar.core.Plane
 import com.google.ar.core.TrackingState
 import com.google.ar.core.Frame as ArFrame
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
 import com.example.augmented_mobile_application.repository.RoutineRepository
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
@@ -92,10 +93,36 @@ fun ARView(
         }
     }
     
-    // Check ARCore availability
+    // Check ARCore availability and handle errors gracefully
+    var arCoreAvailable by remember { mutableStateOf(false) }
+    var arCoreError by remember { mutableStateOf<String?>(null) }
+    
     LaunchedEffect(Unit) {
-        val availability = ArCoreApk.getInstance().checkAvailability(context)
-        Log.i(TAG, "ARCore availability: $availability")
+        try {
+            val availability = ArCoreApk.getInstance().checkAvailability(context)
+            Log.i(TAG, "ARCore availability: $availability")
+            
+            arCoreAvailable = when (availability) {
+                ArCoreApk.Availability.SUPPORTED_INSTALLED -> true
+                ArCoreApk.Availability.SUPPORTED_APK_TOO_OLD,
+                ArCoreApk.Availability.SUPPORTED_NOT_INSTALLED -> {
+                    arCoreError = "ARCore no está instalado o necesita actualización"
+                    false
+                }
+                ArCoreApk.Availability.UNSUPPORTED_DEVICE_NOT_CAPABLE -> {
+                    arCoreError = "Este dispositivo no es compatible con ARCore"
+                    false
+                }
+                else -> {
+                    arCoreError = "ARCore no está disponible"
+                    false
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error checking ARCore availability", e)
+            arCoreError = "Error verificando compatibilidad AR: ${e.message}"
+            arCoreAvailable = false
+        }
     }
     
     // Camera permission state
@@ -137,6 +164,50 @@ fun ARView(
         }
     }
     
+    // Show error screen if ARCore is not available
+    if (!arCoreAvailable) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                modifier = Modifier.padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        Icons.Default.Warning,
+                        contentDescription = "Error",
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Error de Realidad Aumentada",
+                        style = MaterialTheme.typography.headlineSmall,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = arCoreError ?: "Error desconocido",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { navController.navigateUp() }
+                    ) {
+                        Text("Volver")
+                    }
+                }
+            }
+        }
+        return
+    }
+
     // Show permission request screen if camera permission is not granted
     if (!hasCameraPermission) {
         Box(
@@ -202,22 +273,47 @@ fun ARView(
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }
 
+    // ARSceneView initialization state
+    var arSceneViewError by remember { mutableStateOf<String?>(null) }
+    var isArSceneViewInitialized by remember { mutableStateOf(false) }
+
     // Initialize model placement coordinator when ARSceneView is ready
-    LaunchedEffect(arSceneViewRef.value) {
-        arSceneViewRef.value?.let { sceneView ->
-            modelPlacementCoordinator.value = ModelPlacementCoordinator(sceneView).also { coordinator ->
-                // Load the 3D model
-                scope.launch {
-                    val modelLoaded = coordinator.loadModel(modelPath)
-                    isLoadingModel = !modelLoaded
-                    if (modelLoaded) {
-                        Log.i(TAG, "3D model loaded successfully")
-                    } else {
-                        Log.e(TAG, "Failed to load 3D model")
+    LaunchedEffect(isArSceneViewInitialized) {
+        if (isArSceneViewInitialized) {
+            arSceneViewRef.value?.let { sceneView ->
+                try {
+                    // Add a delay to ensure ARSceneView is fully initialized
+                    kotlinx.coroutines.delay(1000)
+                    
+                    modelPlacementCoordinator.value = ModelPlacementCoordinator(sceneView).also { coordinator ->
+                        // Load the 3D model with timeout and error handling
+                        scope.launch {
+                            try {
+                                Log.i(TAG, "Starting to load 3D model: $modelPath")
+                                
+                                // Add timeout for model loading
+                                val modelLoaded = kotlinx.coroutines.withTimeoutOrNull(10000) {
+                                    coordinator.loadModel(modelPath)
+                                } ?: false
+                                
+                                isLoadingModel = !modelLoaded
+                                if (modelLoaded) {
+                                    Log.i(TAG, "3D model loaded successfully")
+                                } else {
+                                    Log.e(TAG, "Failed to load 3D model: $modelPath (timeout or error)")
+                                }
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Exception loading 3D model: $modelPath", e)
+                                isLoadingModel = false
+                            }
+                        }
                     }
+                    Log.i(TAG, "ModelPlacementCoordinator initialized")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error initializing ModelPlacementCoordinator", e)
+                    isLoadingModel = false
                 }
             }
-            Log.i(TAG, "ModelPlacementCoordinator initialized")
         }
     }
 
@@ -236,74 +332,175 @@ fun ARView(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Simplified AndroidView for ARSceneView
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                Log.i(TAG, "Creating ARSceneView...")
-                val sceneView = ARSceneView(ctx).apply {
-                    Log.i(TAG, "ARSceneView created successfully")
-
-                    configureSession { session, config ->
-                        Log.i(TAG, "Configuring ARCore session...")
-                        config.focusMode = Config.FocusMode.AUTO
-                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                        config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-                        
-                        // Enable depth for better tracking if supported
-                        if (session.isDepthModeSupported(Config.DepthMode.AUTOMATIC)) {
-                            config.depthMode = Config.DepthMode.AUTOMATIC
-                            Log.i(TAG, "Depth mode enabled")
+        // Show error if ARSceneView failed to initialize
+        if (arSceneViewError != null) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    modifier = Modifier.padding(16.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Icon(
+                            Icons.Default.Error,
+                            contentDescription = "Error",
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Error de Renderizado AR",
+                            style = MaterialTheme.typography.headlineSmall,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = arSceneViewError ?: "Error desconocido",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { 
+                                arSceneViewError = null
+                                isArSceneViewInitialized = false
+                            }
+                        ) {
+                            Text("Reintentar")
                         }
-                        
-                        Log.i(TAG, "ARCore session configured")
-                    }
-
-                    // Enable plane visualization
-                    planeRenderer.isEnabled = true
-
-                    onFrame = { frameTime ->
-                        val currentFrame: ArFrame? = this.frame
-                        // Simple frame handling for surface detection
-                        if (currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
-                            val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
-                            isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { navController.navigateUp() }
+                        ) {
+                            Text("Volver")
                         }
                     }
-
-                    // Store reference for later use
-                    arSceneViewRef.value = this
                 }
-                Log.i(TAG, "Returning ARSceneView from factory")
-                sceneView
             }
-        )
+        } else {
+            // Safe ARSceneView initialization with extensive error handling
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { ctx ->
+                    Log.i(TAG, "Creating ARSceneView...")
+                    try {
+                        // Create ARSceneView with minimal configuration to avoid crashes
+                        val sceneView = ARSceneView(ctx)
+                        
+                        // Post initialization to avoid blocking the UI thread
+                        sceneView.post {
+                            try {
+                                Log.i(TAG, "Post-initialization of ARSceneView...")
+                                
+                                // Configure session with minimal settings
+                                sceneView.configureSession { session, config ->
+                                    try {
+                                        Log.i(TAG, "Configuring ARCore session with minimal settings...")
+                                        config.focusMode = Config.FocusMode.AUTO
+                                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                                        config.lightEstimationMode = Config.LightEstimationMode.DISABLED
+                                        
+                                        // Avoid depth mode entirely to prevent crashes
+                                        config.depthMode = Config.DepthMode.DISABLED
+                                        
+                                        Log.i(TAG, "ARCore session configured successfully")
+                                    } catch (e: Exception) {
+                                        Log.e(TAG, "Error configuring ARCore session", e)
+                                        arSceneViewError = "Error configurando sesión AR: ${e.message}"
+                                    }
+                                }
 
-        // Simple touch handling for model placement
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInteropFilter { event ->
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            if (maintenanceStarted && !modelPlaced && isPlacementReady) {
-                                arSceneViewRef.value?.let { arSceneView ->
-                                    val frame = arSceneView.frame
-                                    if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
+                                // Enable plane visualization with error handling
+                                try {
+                                    sceneView.planeRenderer.isEnabled = true
+                                    Log.i(TAG, "Plane renderer enabled")
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Could not enable plane renderer: ${e.message}")
+                                    // Continue without plane renderer
+                                }
+
+                                // Set up frame callback with error handling
+                                sceneView.onFrame = { frameTime ->
+                                    try {
+                                        val currentFrame: ArFrame? = sceneView.frame
+                                        // Simple frame handling for surface detection
+                                        if (currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
+                                            val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
+                                            isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
+                                        }
+                                    } catch (e: Exception) {
+                                        // Silently handle frame errors to avoid spam
+                                        if (System.currentTimeMillis() % 10000 == 0L) {
+                                            Log.w(TAG, "Frame processing error: ${e.message}")
+                                        }
+                                    }
+                                }
+
+                                // Store reference for later use
+                                arSceneViewRef.value = sceneView
+                                isArSceneViewInitialized = true
+                                Log.i(TAG, "ARSceneView post-initialization completed successfully")
+                                
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error in ARSceneView post-initialization", e)
+                                arSceneViewError = "Error inicializando AR: ${e.message}"
+                            }
+                        }
+                        
+                        Log.i(TAG, "ARSceneView created successfully")
+                        sceneView
+                        
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Critical error creating ARSceneView", e)
+                        arSceneViewError = "Error crítico creando vista AR: ${e.message}"
+                        // Return a simple dummy view to prevent crashes
+                        android.view.View(ctx)
+                    }
+                }
+            )
+        }
+
+        // Simple touch handling for model placement with extensive error handling
+        if (isArSceneViewInitialized && arSceneViewError == null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInteropFilter { event ->
+                        when (event.action) {
+                            MotionEvent.ACTION_DOWN -> {
+                                if (maintenanceStarted && !modelPlaced && isPlacementReady) {
+                                    arSceneViewRef.value?.let { arSceneView ->
                                         try {
-                                            val hitResults = frame.hitTest(event.x, event.y)
-                                            val validHit = hitResults.find { hit ->
-                                                val trackable = hit.trackable
-                                                trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
-                                            }
-                                            
-                                            if (validHit != null) {
-                                                val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
-                                                if (placementSuccess == true) {
-                                                    modelPlaced = true
-                                                    currentStepIndex = maxOf(1, currentStepIndex)
-                                                    Log.i(TAG, "Model placed successfully")
+                                            val frame = arSceneView.frame
+                                            if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
+                                                try {
+                                                    val hitResults = frame.hitTest(event.x, event.y)
+                                                    val validHit = hitResults.find { hit ->
+                                                        try {
+                                                            val trackable = hit.trackable
+                                                            trackable is Plane && trackable.isPoseInPolygon(hit.hitPose)
+                                                        } catch (e: Exception) {
+                                                            Log.w(TAG, "Error checking hit validity: ${e.message}")
+                                                            false
+                                                        }
+                                                    }
+                                                    
+                                                    if (validHit != null) {
+                                                        val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
+                                                        if (placementSuccess == true) {
+                                                            modelPlaced = true
+                                                            currentStepIndex = maxOf(1, currentStepIndex)
+                                                            Log.i(TAG, "Model placed successfully")
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e(TAG, "Error during hit test: ${e.message}", e)
                                                 }
                                             }
                                         } catch (e: Exception) {
@@ -311,13 +508,13 @@ fun ARView(
                                         }
                                     }
                                 }
+                                false
                             }
-                            false
+                            else -> false
                         }
-                        else -> false
                     }
-                }
-        )
+            )
+        }
 
         // Main UI overlay
         Column(
@@ -412,6 +609,7 @@ fun ARView(
                 } else {
                     Text(
                         text = when {
+                            !isArSceneViewInitialized -> "Iniciando vista AR..."
                             isLoadingModel -> "Cargando modelo..."
                             !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
                             !isPlacementReady -> "Mueva el dispositivo lentamente para detectar superficies"
@@ -435,7 +633,7 @@ fun ARView(
                                 currentStepIndex = 1
                             }
                         },
-                        enabled = !isLoadingModel && !maintenanceStarted,
+                        enabled = !isLoadingModel && !maintenanceStarted && isArSceneViewInitialized,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = DarkGreen,
                             disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
