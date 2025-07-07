@@ -8,6 +8,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.*
@@ -33,12 +36,11 @@ import com.example.augmented_mobile_application.model.AuthState
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
 import com.example.augmented_mobile_application.model.MaintenanceStep
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.PlayArrow
 import com.example.augmented_mobile_application.ui.theme.DarkGreen
 import com.example.augmented_mobile_application.ui.theme.OffWhite
 import coil.compose.AsyncImage
@@ -46,9 +48,6 @@ import coil.ImageLoader
 import coil.decode.GifDecoder
 import coil.request.ImageRequest
 import coil.size.Size
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.ExperimentalFoundationApi
 import kotlinx.coroutines.launch
 
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
@@ -147,47 +146,33 @@ fun UserContentView(
                 .background(OffWhite),
             contentAlignment = Alignment.Center
         ) {
-            // Check if a routine is selected and show step details
-            val currentRoutine = selectedRoutine
-            if (currentRoutine != null && showStepDetails) {
-                RoutineStepDetailView(
-                    routine = currentRoutine,
-                    onBackToSelection = { routineViewModel.showRoutineSelection() },
-                    onStartMaintenance = { routine ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        routineViewModel.selectRoutine(routine)
-                        routineViewModel.startMaintenanceAR()
-                    },
-                    imageLoader = imageLoader
-                )
-            } else {
-                // Show routine selection screen
-                RoutineSelectionView(
-                    machineType = MACHINE_TYPE,
-                    imageLoader = imageLoader,
-                    availableRoutines = availableRoutines,
-                    isLoading = isLoading,
-                    error = error,
-                    onRoutineSelected = { routine ->
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        routineViewModel.selectRoutine(routine)
-                        routineViewModel.showStepDetails()
-                    },
-                    onNavigateToManuals = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        navController.navigate("pumpManuals")
-                    },
-                    onLogout = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLogout()
-                    },
-                    onRetry = { routineViewModel.loadRoutines() },
-                    onClearError = { 
-                        routineViewModel.clearError()
-                        routineViewModel.clearLocalError()
-                    }
-                )
-            }
+            // Always show routine selection screen - go directly to AR when routine is selected
+            RoutineSelectionView(
+                machineType = MACHINE_TYPE,
+                imageLoader = imageLoader,
+                availableRoutines = availableRoutines,
+                isLoading = isLoading,
+                error = error,
+                onRoutineSelected = { routine ->
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    // Select routine and immediately start AR session
+                    routineViewModel.selectRoutine(routine)
+                    routineViewModel.startMaintenanceAR()
+                },
+                onNavigateToManuals = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    navController.navigate("pumpManuals")
+                },
+                onLogout = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onLogout()
+                },
+                onRetry = { routineViewModel.loadRoutines() },
+                onClearError = { 
+                    routineViewModel.clearError()
+                    routineViewModel.clearLocalError()
+                }
+            )
         }
     }
 }
@@ -416,7 +401,7 @@ fun RoutineDetailsView(
         ) {
             IconButton(onClick = onBack) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    imageVector = Icons.Default.KeyboardArrowLeft,
                     contentDescription = "Volver",
                     tint = DarkGreen
                 )
@@ -492,7 +477,7 @@ fun RoutineDetailsView(
                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreen.copy(alpha = 0.7f))
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    imageVector = Icons.Default.KeyboardArrowLeft,
                     contentDescription = "Anterior",
                     modifier = Modifier.size(16.dp)
                 )
@@ -514,7 +499,7 @@ fun RoutineDetailsView(
                 Text("Siguiente")
                 Spacer(modifier = Modifier.width(4.dp))
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    imageVector = Icons.Default.KeyboardArrowRight,
                     contentDescription = "Siguiente",
                     modifier = Modifier.size(16.dp)
                 )
@@ -898,242 +883,4 @@ fun ActionButtonsSection(
     }
 }
 
-/**
- * Step detail view for selected routine
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun RoutineStepDetailView(
-    routine: MaintenanceRoutine,
-    onBackToSelection: () -> Unit,
-    onStartMaintenance: (MaintenanceRoutine) -> Unit,
-    imageLoader: ImageLoader
-) {
-    val pagerState = rememberPagerState(pageCount = { routine.steps.size })
-    val coroutineScope = rememberCoroutineScope()
-    val haptic = LocalHapticFeedback.current
 
-    Column(
-        modifier = Modifier.fillMaxSize()
-    ) {
-        // Header with back button and routine info
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = DarkGreen),
-            shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onBackToSelection()
-                        }
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Volver",
-                            tint = Color.White
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = routine.displayName,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                        Text(
-                            text = routine.description,
-                            fontSize = 14.sp,
-                            color = Color.White.copy(alpha = 0.9f)
-                        )
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(12.dp))
-                
-                // Progress indicator
-                LinearProgressIndicator(
-                    progress = { (pagerState.currentPage + 1).toFloat() / routine.steps.size },
-                    modifier = Modifier.fillMaxWidth(),
-                    color = Color.White,
-                    trackColor = Color.White.copy(alpha = 0.3f)
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-                
-                Text(
-                    text = "Paso ${pagerState.currentPage + 1} de ${routine.steps.size}",
-                    fontSize = 14.sp,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        }
-
-        // Step content pager
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) { page ->
-            val step = routine.steps[page]
-            
-            Card(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    // Step title
-                    Text(
-                        text = step.title,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = DarkGreen,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    // Step instruction
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = DarkGreen.copy(alpha = 0.1f)
-                        )
-                    ) {
-                        Text(
-                            text = step.instruction,
-                            fontSize = 16.sp,
-                            lineHeight = 24.sp,
-                            color = Color.Black,
-                            modifier = Modifier.padding(16.dp)
-                        )
-                    }
-                    
-                    // Visual indicator for AR model
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer
-                        )
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Icon(
-                                Icons.Default.ViewInAr,
-                                contentDescription = "AR Model",
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Modelo 3D disponible",
-                                fontSize = 14.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                textAlign = TextAlign.Center
-                            )
-                            Text(
-                                text = routine.glbFileName,
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // Navigation controls
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = Color.White),
-            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                // Step navigation buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            coroutineScope.launch {
-                                if (pagerState.currentPage > 0) {
-                                    pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                                }
-                            }
-                        },
-                        enabled = pagerState.currentPage > 0,
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Anterior")
-                    }
-
-                    Button(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            coroutineScope.launch {
-                                if (pagerState.currentPage < routine.steps.size - 1) {
-                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                }
-                            }
-                        },
-                        enabled = pagerState.currentPage < routine.steps.size - 1,
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkGreen)
-                    ) {
-                        Text("Siguiente")
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Start maintenance button
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onStartMaintenance(routine)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Iniciar Mantenimiento",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-}
