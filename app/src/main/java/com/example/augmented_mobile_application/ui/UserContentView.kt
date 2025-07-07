@@ -492,7 +492,7 @@ fun RoutineDetailsView(
                 colors = ButtonDefaults.buttonColors(containerColor = DarkGreen.copy(alpha = 0.7f))
             ) {
                 Icon(
-                    imageVector = Icons.Default.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Anterior",
                     modifier = Modifier.size(16.dp)
                 )
@@ -514,7 +514,7 @@ fun RoutineDetailsView(
                 Text("Siguiente")
                 Spacer(modifier = Modifier.width(4.dp))
                 Icon(
-                    imageVector = Icons.Default.ArrowForward,
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                     contentDescription = "Siguiente",
                     modifier = Modifier.size(16.dp)
                 )
