@@ -32,6 +32,9 @@ import com.google.ar.core.Frame as ArFrame
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
+import com.example.augmented_mobile_application.ar.SurfaceChecker
+import com.example.augmented_mobile_application.ui.components.SurfaceQualityIndicator
+import com.example.augmented_mobile_application.ui.components.SurfaceOverlay
 import com.example.augmented_mobile_application.repository.RoutineRepository
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
 import androidx.compose.runtime.LaunchedEffect
@@ -272,6 +275,7 @@ fun ARView(
 
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }
+    val surfaceChecker = remember { SurfaceChecker() }
 
     // ARSceneView initialization state
     var arSceneViewError by remember { mutableStateOf<String?>(null) }
@@ -355,6 +359,9 @@ fun ARView(
         onDispose {
             Log.i(TAG, "ARView lifecycle cleanup started")
             try {
+                // Clear surface checker
+                surfaceChecker.clearHistory()
+                
                 // Stop any running coroutines
                 scope.launch {
                     // Cancel model loading
@@ -506,7 +513,7 @@ fun ARView(
                                     // Continue without plane renderer
                                 }
 
-                                // Set up frame callback with timestamp validation
+                                // Set up frame callback with surface analysis
                                 var lastFrameTimestamp = 0L
                                 sceneView.onFrame = { frameTime ->
                                     try {
@@ -517,14 +524,21 @@ fun ARView(
                                             val currentTimestamp = currentFrame.timestamp
                                             if (lastFrameTimestamp > 0 && currentTimestamp <= lastFrameTimestamp) {
                                                 Log.w(TAG, "Non-monotonic timestamp detected: $currentTimestamp <= $lastFrameTimestamp")
-                                                // Skip this frame to maintain monotonicity - use different approach
+                                                // Skip this frame to maintain monotonicity
                                             } else {
                                                 lastFrameTimestamp = currentTimestamp
                                                 
-                                                // Process plane detection
-                                                val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
-                                                isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
+                                                // Analyze surfaces for quality
+                                                surfaceChecker.analyzeSurfaces(currentFrame)
+                                                
+                                                // Update placement readiness based on surface analysis
+                                                val surfaceQuality = surfaceChecker.surfaceQuality.value
+                                                isPlacementReady = surfaceQuality.isGoodSurface || surfaceQuality.qualityScore > 0.5f
                                             }
+                                        } else {
+                                            // Clear surface analysis when not tracking
+                                            surfaceChecker.analyzeSurfaces(null)
+                                            isPlacementReady = false
                                         }
                                     } catch (e: Exception) {
                                         // Throttled error logging to avoid spam
@@ -558,6 +572,15 @@ fun ARView(
             )
         }
 
+        // Surface overlay to show detected planes and quality indicators
+        if (isArSceneViewInitialized && arSceneViewError == null) {
+            SurfaceOverlay(
+                detectedSurfaces = surfaceChecker.detectedSurfaces,
+                bestSurface = surfaceChecker.bestSurface,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         // Simple touch handling for model placement with extensive error handling
         if (isArSceneViewInitialized && arSceneViewError == null) {
             Box(
@@ -569,6 +592,10 @@ fun ARView(
                                 if (maintenanceStarted && !modelPlaced) {
                                     arSceneViewRef.value?.let { arSceneView ->
                                         try {
+                                            // First check if the touched point is on a good surface
+                                            val isOnGoodSurface = surfaceChecker.isPointOnGoodSurface(event.x, event.y)
+                                            Log.d(TAG, "Touch at (${event.x}, ${event.y}), on good surface: $isOnGoodSurface")
+                                            
                                             val frame = arSceneView.frame
                                             if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
                                                 try {
@@ -583,14 +610,23 @@ fun ARView(
                                                         }
                                                     }
                                                     
-                                                    if (validHit != null) {
+                                                    if (validHit != null && isOnGoodSurface) {
+                                                        // Place on validated good surface
                                                         val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
                                                         if (placementSuccess == true) {
                                                             modelPlaced = true
                                                             currentStepIndex = maxOf(1, currentStepIndex)
-                                                            Log.i(TAG, "Model placed successfully at hit test position")
+                                                            Log.i(TAG, "Model placed successfully on validated surface")
                                                         } else {
-                                                            Log.w(TAG, "Model placement failed at hit test position")
+                                                            Log.w(TAG, "Model placement failed on validated surface")
+                                                        }
+                                                    } else if (validHit != null) {
+                                                        // Place on any detected surface with warning
+                                                        val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
+                                                        if (placementSuccess == true) {
+                                                            modelPlaced = true
+                                                            currentStepIndex = maxOf(1, currentStepIndex)
+                                                            Log.i(TAG, "Model placed on suboptimal surface")
                                                         }
                                                     } else {
                                                         // Fallback: Try placing at estimated position when no valid hit
@@ -601,7 +637,7 @@ fun ARView(
                                                         if (placementSuccess == true) {
                                                             modelPlaced = true
                                                             currentStepIndex = maxOf(1, currentStepIndex)
-                                                            Log.i(TAG, "Model placed successfully at estimated position")
+                                                            Log.i(TAG, "Model placed at estimated position")
                                                         } else {
                                                             Log.w(TAG, "Model placement failed at estimated position")
                                                         }
@@ -618,7 +654,7 @@ fun ARView(
                                                 if (placementSuccess == true) {
                                                     modelPlaced = true
                                                     currentStepIndex = maxOf(1, currentStepIndex)
-                                                    Log.i(TAG, "Model placed successfully at estimated position (no tracking)")
+                                                    Log.i(TAG, "Model placed at estimated position (no tracking)")
                                                 }
                                             }
                                         } catch (e: Exception) {
@@ -641,37 +677,52 @@ fun ARView(
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Top instruction card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.White.copy(alpha = 0.9f)
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = machine_selected,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = DarkGreen
+            // Top section with instruction card and surface quality
+            Column {
+                // Instruction card
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color.White.copy(alpha = 0.9f)
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = instructions[currentStepIndex],
-                        fontSize = 16.sp,
-                        color = Color.Black
-                    )
-                    
-                    // Loading indicator
-                    if (isLoadingModel) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = machine_selected,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
                             color = DarkGreen
                         )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = instructions[currentStepIndex],
+                            fontSize = 16.sp,
+                            color = Color.Black
+                        )
+                        
+                        // Loading indicator
+                        if (isLoadingModel) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = DarkGreen
+                            )
+                        }
                     }
+                }
+                
+                // Surface quality indicator (only show when maintenance started and model not placed)
+                if (maintenanceStarted && !modelPlaced && isArSceneViewInitialized) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SurfaceQualityIndicator(
+                        surfaceQuality = surfaceChecker.surfaceQuality,
+                        detectedSurfaces = surfaceChecker.detectedSurfaces,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp)
+                    )
                 }
             }
 
@@ -725,12 +776,17 @@ fun ARView(
                         }
                     }
                 } else {
+                    val surfaceQualityDesc = if (maintenanceStarted && isArSceneViewInitialized) {
+                        surfaceChecker.getSurfaceQualityDescription()
+                    } else ""
+                    
                     Text(
                         text = when {
                             !isArSceneViewInitialized -> "Iniciando vista AR..."
                             isLoadingModel -> "Cargando modelo 3D..."
                             !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
-                            else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
+                            surfaceQualityDesc.isNotEmpty() -> surfaceQualityDesc
+                            else -> "Toque en la pantalla para colocar el modelo 3D"
                         },
                         color = Color.White,
                         textAlign = TextAlign.Center,
@@ -771,14 +827,24 @@ fun ARView(
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(
                             onClick = {
-                                // Force place model at center of screen
-                                val placementSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
-                                    0.5f, 0.5f, 1.5f
-                                )
+                                // Try to place on best detected surface first, then fallback to center
+                                val bestSurface = surfaceChecker.bestSurface.value
+                                val placementSuccess = if (bestSurface != null) {
+                                    // Use best detected surface
+                                    modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                        bestSurface.centerX, bestSurface.centerY, 1.5f
+                                    )
+                                } else {
+                                    // Fallback to center of screen
+                                    modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                        0.5f, 0.5f, 1.5f
+                                    )
+                                }
+                                
                                 if (placementSuccess == true) {
                                     modelPlaced = true
                                     currentStepIndex = maxOf(1, currentStepIndex)
-                                    Log.i(TAG, "Model force-placed at center")
+                                    Log.i(TAG, "Model force-placed ${if (bestSurface != null) "on best surface" else "at center"}")
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(
