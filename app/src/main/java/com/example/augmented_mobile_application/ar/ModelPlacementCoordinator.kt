@@ -29,6 +29,9 @@ class ModelPlacementCoordinator(
     private var currentModelNode: ModelNode? = null
     private var modelTemplate: ModelNode? = null
     
+    // Surface quality checker for better placement
+    private val surfaceQualityChecker = SurfaceQualityChecker()
+    
     // Cache manager for optimized model loading
     private val cacheManager = ModelCacheManager.getInstance()
 
@@ -40,6 +43,10 @@ class ModelPlacementCoordinator(
 
     private val _placementPosition = MutableStateFlow<Position?>(null)
     val placementPosition: StateFlow<Position?> = _placementPosition
+    
+    // Surface quality state
+    private val _currentSurfaceQuality = MutableStateFlow<SurfaceQualityChecker.SurfaceQuality?>(null)
+    val currentSurfaceQuality: StateFlow<SurfaceQualityChecker.SurfaceQuality?> = _currentSurfaceQuality
 
     /**
      * Load the 3D model template with enhanced GLBModelLoader
@@ -91,13 +98,71 @@ class ModelPlacementCoordinator(
     }
 
     /**
-     * Place model at hit result with enhanced positioning
+     * Check surface quality at screen coordinates
+     */
+    fun checkSurfaceQuality(screenX: Float, screenY: Float): SurfaceQualityChecker.SurfaceQuality {
+        val quality = surfaceQualityChecker.checkSurfaceQuality(arSceneView, screenX, screenY)
+        _currentSurfaceQuality.value = quality
+        return quality
+    }
+    
+    /**
+     * Get overall surface quality for all detected planes
+     */
+    fun getOverallSurfaceQuality(): SurfaceQualityChecker.SurfaceQuality {
+        val quality = surfaceQualityChecker.getOverallSurfaceQuality(arSceneView)
+        _currentSurfaceQuality.value = quality
+        return quality
+    }
+    
+    /**
+     * Check if surface is good enough for model placement
+     */
+    fun isSurfaceGoodForPlacement(screenX: Float, screenY: Float): Boolean {
+        val quality = checkSurfaceQuality(screenX, screenY)
+        return quality.isGoodQuality
+    }
+
+    /**
+     * Place model at hit result with surface quality validation
      */
     fun placeModelAtHitResult(hitResult: HitResult): Boolean {
         return try {
             if (modelTemplate == null) {
                 Log.w(TAG, "Cannot place model - template not loaded")
                 return false
+            }
+
+            // First, validate surface quality at hit result
+            val hitPose = hitResult.hitPose
+            val trackable = hitResult.trackable
+            
+            if (trackable is com.google.ar.core.Plane) {
+                // Perform surface quality check using screen coordinates
+                // We need to estimate screen coordinates from hit result
+                val frame = arSceneView.frame ?: return false
+                val camera = frame.camera
+                
+                // Project world position back to screen (approximate)
+                val screenX = arSceneView.width * 0.5f  // Use center as approximation
+                val screenY = arSceneView.height * 0.5f
+                
+                val surfaceQuality = surfaceQualityChecker.checkSurfaceQuality(
+                    arSceneView, screenX, screenY
+                )
+                
+                _currentSurfaceQuality.value = surfaceQuality
+                
+                if (!surfaceQuality.isGoodQuality) {
+                    Log.w(TAG, "Surface quality insufficient for placement:")
+                    surfaceQuality.issues.forEach { issue ->
+                        Log.w(TAG, "  - $issue")
+                    }
+                    Log.w(TAG, "Surface quality score: ${surfaceQuality.score}")
+                    return false
+                }
+                
+                Log.i(TAG, "Surface quality validated - score: ${surfaceQuality.score}")
             }
 
             // Remove any existing model
@@ -112,14 +177,6 @@ class ModelPlacementCoordinator(
 
             // Clone the model template
             val modelNode = createModelInstance(modelTemplate!!)
-
-            // Calculate enhanced position with surface offset
-            val hitPose = hitResult.hitPose
-            val enhancedPosition = Position(
-                hitPose.translation[0],
-                hitPose.translation[1] + MODEL_HEIGHT_OFFSET,
-                hitPose.translation[2]
-            )
 
             // Apply appropriate rotation based on surface normal
             val surfaceRotation = calculateSurfaceRotation(hitPose)
@@ -389,6 +446,9 @@ class ModelPlacementCoordinator(
             // Clear current model first
             removeCurrentModel()
             
+            // Clear surface quality tracking history
+            surfaceQualityChecker.clearOldTrackingHistory()
+            
             // Clear template on render thread if available
             modelTemplate?.let { template ->
                 // Post cleanup to render thread
@@ -404,6 +464,7 @@ class ModelPlacementCoordinator(
             
             modelTemplate = null
             _isModelLoaded.value = false
+            _currentSurfaceQuality.value = null
             
             Log.i(TAG, "ModelPlacementCoordinator cleanup completed")
             

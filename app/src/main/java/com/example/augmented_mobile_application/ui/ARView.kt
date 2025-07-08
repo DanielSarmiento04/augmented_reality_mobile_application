@@ -264,6 +264,7 @@ fun ARView(
     
     // Surface detection state
     var isPlacementReady by remember { mutableStateOf(false) }
+    var surfaceQuality by remember { mutableStateOf<com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality?>(null) }
 
     // Get instructions from loaded routine or use default
     val instructions = currentRoutine?.steps?.map { it.instruction } ?: listOf(
@@ -513,7 +514,7 @@ fun ARView(
                                     // Continue without plane renderer
                                 }
 
-                                // Set up frame callback with surface analysis
+                                // Set up frame callback with surface quality monitoring
                                 var lastFrameTimestamp = 0L
                                 sceneView.onFrame = { frameTime ->
                                     try {
@@ -524,20 +525,29 @@ fun ARView(
                                             val currentTimestamp = currentFrame.timestamp
                                             if (lastFrameTimestamp > 0 && currentTimestamp <= lastFrameTimestamp) {
                                                 Log.w(TAG, "Non-monotonic timestamp detected: $currentTimestamp <= $lastFrameTimestamp")
-                                                // Skip this frame to maintain monotonicity
+                                                // Skip this frame to maintain monotonicity - use different approach
                                             } else {
                                                 lastFrameTimestamp = currentTimestamp
                                                 
-                                                // Analyze surfaces for quality
-                                                surfaceChecker.analyzeSurfaces(currentFrame)
+                                                // Process plane detection
+                                                val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
+                                                isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
                                                 
-                                                // Update placement readiness based on surface analysis
-                                                val surfaceQuality = surfaceChecker.surfaceQuality.value
-                                                isPlacementReady = surfaceQuality.isGoodSurface || surfaceQuality.qualityScore > 0.5f
+                                                // Update surface quality periodically (every 30 frames to avoid performance impact)
+                                                if (frameTime.toLong() % 30 == 0L) {
+                                                    modelPlacementCoordinator.value?.let { coordinator ->
+                                                        try {
+                                                            val overallQuality = coordinator.getOverallSurfaceQuality()
+                                                            surfaceQuality = overallQuality
+                                                        } catch (e: Exception) {
+                                                            Log.w(TAG, "Error updating surface quality: ${e.message}")
+                                                        }
+                                                    }
+                                                }
                                             }
                                         } else {
-                                            // Clear surface analysis when not tracking
-                                            surfaceChecker.analyzeSurfaces(null)
+                                            // Clear surface quality when not tracking
+                                            surfaceQuality = null
                                             isPlacementReady = false
                                         }
                                     } catch (e: Exception) {
@@ -572,16 +582,7 @@ fun ARView(
             )
         }
 
-        // Surface overlay to show detected planes and quality indicators
-        if (isArSceneViewInitialized && arSceneViewError == null) {
-            SurfaceOverlay(
-                detectedSurfaces = surfaceChecker.detectedSurfaces,
-                bestSurface = surfaceChecker.bestSurface,
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-
-        // Simple touch handling for model placement with extensive error handling
+        // Simple touch handling for model placement with surface quality validation
         if (isArSceneViewInitialized && arSceneViewError == null) {
             Box(
                 modifier = Modifier
@@ -592,9 +593,18 @@ fun ARView(
                                 if (maintenanceStarted && !modelPlaced) {
                                     arSceneViewRef.value?.let { arSceneView ->
                                         try {
-                                            // First check if the touched point is on a good surface
-                                            val isOnGoodSurface = surfaceChecker.isPointOnGoodSurface(event.x, event.y)
-                                            Log.d(TAG, "Touch at (${event.x}, ${event.y}), on good surface: $isOnGoodSurface")
+                                            // First check surface quality at touch point
+                                            val coordinator = modelPlacementCoordinator.value
+                                            val surfaceQualityAtTouch = coordinator?.checkSurfaceQuality(event.x, event.y)
+                                            
+                                            if (surfaceQualityAtTouch != null && !surfaceQualityAtTouch.isGoodQuality) {
+                                                Log.w(TAG, "Surface quality insufficient at touch point:")
+                                                surfaceQualityAtTouch.issues.forEach { issue ->
+                                                    Log.w(TAG, "  - $issue")
+                                                }
+                                                Log.i(TAG, "Consider using force placement or finding a better surface")
+                                                return@pointerInteropFilter false
+                                            }
                                             
                                             val frame = arSceneView.frame
                                             if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
@@ -610,23 +620,15 @@ fun ARView(
                                                         }
                                                     }
                                                     
-                                                    if (validHit != null && isOnGoodSurface) {
-                                                        // Place on validated good surface
-                                                        val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
+                                                    if (validHit != null) {
+                                                        // Place on validated surface
+                                                        val placementSuccess = coordinator?.placeModelAtHitResult(validHit)
                                                         if (placementSuccess == true) {
                                                             modelPlaced = true
                                                             currentStepIndex = maxOf(1, currentStepIndex)
                                                             Log.i(TAG, "Model placed successfully on validated surface")
                                                         } else {
-                                                            Log.w(TAG, "Model placement failed on validated surface")
-                                                        }
-                                                    } else if (validHit != null) {
-                                                        // Place on any detected surface with warning
-                                                        val placementSuccess = modelPlacementCoordinator.value?.placeModelAtHitResult(validHit)
-                                                        if (placementSuccess == true) {
-                                                            modelPlaced = true
-                                                            currentStepIndex = maxOf(1, currentStepIndex)
-                                                            Log.i(TAG, "Model placed on suboptimal surface")
+                                                            Log.w(TAG, "Model placement failed despite good surface quality")
                                                         }
                                                     } else {
                                                         // Fallback: Try placing at estimated position when no valid hit
@@ -710,21 +712,51 @@ fun ARView(
                                 color = DarkGreen
                             )
                         }
+                        
+                        // Surface quality indicator
+                        if (maintenanceStarted && !modelPlaced && surfaceQuality != null) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (surfaceQuality!!.isGoodQuality) 
+                                        Color.Green.copy(alpha = 0.1f) else Color(0xFFFFA500).copy(alpha = 0.1f) // Orange
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(8.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Calidad de Superficie:",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        Text(
+                                            text = "${(surfaceQuality!!.score * 100).toInt()}%",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (surfaceQuality!!.isGoodQuality) Color.Green else Color(0xFFFFA500) // Orange
+                                        )
+                                    }
+                                    
+                                    if (surfaceQuality!!.issues.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        surfaceQuality!!.issues.take(2).forEach { issue ->
+                                            Text(
+                                                text = "• $issue",
+                                                fontSize = 10.sp,
+                                                color = Color.Gray
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
-                
-                // Surface quality indicator (only show when maintenance started and model not placed)
-                if (maintenanceStarted && !modelPlaced && isArSceneViewInitialized) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    SurfaceQualityIndicator(
-                        surfaceQuality = surfaceChecker.surfaceQuality,
-                        detectedSurfaces = surfaceChecker.detectedSurfaces,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 8.dp)
-                    )
-                }
-            }
 
             // Bottom controls
             Column(
@@ -776,17 +808,14 @@ fun ARView(
                         }
                     }
                 } else {
-                    val surfaceQualityDesc = if (maintenanceStarted && isArSceneViewInitialized) {
-                        surfaceChecker.getSurfaceQualityDescription()
-                    } else ""
-                    
                     Text(
                         text = when {
                             !isArSceneViewInitialized -> "Iniciando vista AR..."
                             isLoadingModel -> "Cargando modelo 3D..."
                             !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
-                            surfaceQualityDesc.isNotEmpty() -> surfaceQualityDesc
-                            else -> "Toque en la pantalla para colocar el modelo 3D"
+                            surfaceQuality?.isGoodQuality == true -> "Superficie detectada - Toque para colocar el modelo"
+                            surfaceQuality != null -> "Calidad de superficie: ${(surfaceQuality!!.score * 100).toInt()}% - Mejore la superficie o use colocación forzada"
+                            else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
                         },
                         color = Color.White,
                         textAlign = TextAlign.Center,
@@ -866,4 +895,5 @@ fun ARView(
             }
         }
     }
+}
 }
