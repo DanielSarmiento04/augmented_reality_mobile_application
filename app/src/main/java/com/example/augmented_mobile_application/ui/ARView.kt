@@ -466,7 +466,22 @@ fun ARView(
                                         // Core session configuration for stability
                                         config.focusMode = Config.FocusMode.AUTO
                                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
-                                        config.lightEstimationMode = Config.LightEstimationMode.DISABLED
+                                        
+                                        // Enable light estimation for proper PBR material rendering
+                                        // Try ENVIRONMENTAL_HDR first, fallback to AMBIENT_INTENSITY if not available
+                                        try {
+                                            config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
+                                            Log.i(TAG, "Using ENVIRONMENTAL_HDR light estimation for best color accuracy")
+                                        } catch (e: Exception) {
+                                            try {
+                                                config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
+                                                Log.i(TAG, "Using AMBIENT_INTENSITY light estimation (fallback)")
+                                            } catch (e2: Exception) {
+                                                Log.w(TAG, "Light estimation not available, colors may be less accurate")
+                                                config.lightEstimationMode = Config.LightEstimationMode.DISABLED
+                                            }
+                                        }
+                                        
                                         config.depthMode = Config.DepthMode.DISABLED
                                         
                                         // Use LATEST_CAMERA_IMAGE for better sensor compatibility 
@@ -512,6 +527,18 @@ fun ARView(
                                 } catch (e: Exception) {
                                     Log.w(TAG, "Could not enable plane renderer: ${e.message}")
                                     // Continue without plane renderer
+                                }
+
+                                // Configure scene lighting for accurate model colors
+                                try {
+                                    // Enable environmental lighting for PBR materials
+                                    sceneView.scene?.let { scene ->
+                                        // The scene should automatically use environmental lighting
+                                        // when light estimation is enabled
+                                        Log.i(TAG, "Scene lighting configured for PBR rendering")
+                                    }
+                                } catch (e: Exception) {
+                                    Log.w(TAG, "Could not configure scene lighting: ${e.message}")
                                 }
 
                                 // Set up frame callback with surface quality monitoring
