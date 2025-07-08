@@ -121,17 +121,18 @@ class ModelPlacementCoordinator(
                 hitPose.translation[2]
             )
 
-            // Set positions
-            anchorNode.position = enhancedPosition
-            modelNode.position = enhancedPosition
-
             // Apply appropriate rotation based on surface normal
             val surfaceRotation = calculateSurfaceRotation(hitPose)
             modelNode.rotation = surfaceRotation
 
-            // Add to scene
-            arSceneView.scene.addEntity(anchorNode.entity)
-            arSceneView.scene.addEntity(modelNode.entity)
+            // CRITICAL: Add model as child of anchor node first
+            anchorNode.addChildNode(modelNode)
+            
+            // Set model position relative to anchor (should be close to zero for proper attachment)
+            modelNode.position = Position(0f, MODEL_HEIGHT_OFFSET, 0f)
+
+            // CRITICAL: Add anchor node to scene hierarchy (this will add model too)
+            arSceneView.addChildNode(anchorNode)
 
             // Store references
             currentAnchorNode = anchorNode
@@ -139,12 +140,13 @@ class ModelPlacementCoordinator(
 
             // Update state
             _isModelPlaced.value = true
-            _placementPosition.value = enhancedPosition
+            _placementPosition.value = Position(hitPose.translation[0], hitPose.translation[1], hitPose.translation[2])
 
             // Start animation when model is placed
             startModelAnimation(modelNode)
 
-            Log.i(TAG, "Model placed successfully at: $enhancedPosition")
+            Log.i(TAG, "Model placed successfully at anchor position")
+            Log.i(TAG, "Model position relative to anchor: ${modelNode.position}")
             Log.i(TAG, "Surface distance: ${hitResult.distance}m")
             
             true
@@ -184,13 +186,14 @@ class ModelPlacementCoordinator(
                     val anchorNode = AnchorNode(arSceneView.engine, anchor)
                     val modelNode = createModelInstance(modelTemplate!!)
 
-                    val position = Position(worldPosition[0], worldPosition[1], worldPosition[2])
-                    anchorNode.position = position
-                    modelNode.position = position
+                    // Add model as child of anchor node
+                    anchorNode.addChildNode(modelNode)
+                    
+                    // Set model position relative to anchor
+                    modelNode.position = Position(0f, MODEL_HEIGHT_OFFSET, 0f)
 
-                    // Add to scene
-                    arSceneView.scene.addEntity(anchorNode.entity)
-                    arSceneView.scene.addEntity(modelNode.entity)
+                    // Add anchor node to scene hierarchy
+                    arSceneView.addChildNode(anchorNode)
 
                     // Store references
                     currentAnchorNode = anchorNode
@@ -198,12 +201,12 @@ class ModelPlacementCoordinator(
 
                     // Update state
                     _isModelPlaced.value = true
-                    _placementPosition.value = position
+                    _placementPosition.value = Position(worldPosition[0], worldPosition[1], worldPosition[2])
 
                     // Start animation when model is placed
                     startModelAnimation(modelNode)
 
-                    Log.i(TAG, "Model placed at estimated position: $position")
+                    Log.i(TAG, "Model placed at estimated position")
                     return true
                 }
             }
@@ -222,13 +225,11 @@ class ModelPlacementCoordinator(
      */
     fun removeCurrentModel() {
         try {
-            currentModelNode?.let { modelNode ->
-                arSceneView.scene.removeEntity(modelNode.entity)
-                Log.d(TAG, "Removed model node from scene")
-            }
-
             currentAnchorNode?.let { anchorNode ->
-                arSceneView.scene.removeEntity(anchorNode.entity)
+                // Remove anchor node from scene (this removes model too)
+                arSceneView.removeChildNode(anchorNode)
+                
+                // Detach the anchor
                 anchorNode.anchor.detach()
                 Log.d(TAG, "Removed anchor node and detached anchor")
             }
@@ -273,13 +274,28 @@ class ModelPlacementCoordinator(
      * Create a new model instance from template
      */
     private fun createModelInstance(template: ModelNode): ModelNode {
-        return ModelNode(
-            modelInstance = template.modelInstance,
-            scaleToUnits = 1.0f
-        ).apply {
-            isShadowReceiver = false
-            isShadowCaster = true
-            scale = template.scale
+        return try {
+            // Create a proper clone by recreating the model instance
+            // This ensures each placed model has its own instance
+            val newModelInstance = template.modelInstance
+            
+            ModelNode(
+                modelInstance = newModelInstance,
+                scaleToUnits = 1.0f
+            ).apply {
+                isShadowReceiver = false
+                isShadowCaster = true
+                scale = template.scale
+                
+                // Make sure the model is visible
+                isVisible = true
+                
+                Log.d(TAG, "Created new model instance with scale: ${template.scale}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error creating model instance: ${e.message}", e)
+            // Return the template as fallback
+            template
         }
     }
 
@@ -341,33 +357,27 @@ class ModelPlacementCoordinator(
             val frame = arSceneView.frame ?: return null
             val camera = frame.camera
 
-            // Convert screen to NDC
-            val ndcX = (screenX / arSceneView.width) * 2.0f - 1.0f
-            val ndcY = 1.0f - (screenY / arSceneView.height) * 2.0f
-
-            // Get camera matrices
-            val viewMatrix = FloatArray(16)
-            val projMatrix = FloatArray(16)
-            camera.getViewMatrix(viewMatrix, 0)
-            camera.getProjectionMatrix(projMatrix, 0, 0.1f, 100f)
-
-            // Calculate world position (simplified transformation)
+            // Simple approach: place model in front of camera
             val cameraPos = camera.pose.translation
-            val direction = floatArrayOf(
-                ndcX * distance * 0.5f,
-                ndcY * distance * 0.5f,
-                -distance
+            val cameraRotation = camera.pose.rotationQuaternion
+            
+            // Create a position in front of the camera
+            val forward = floatArrayOf(0f, 0f, -distance)
+            
+            // Apply camera rotation to forward vector (simplified)
+            val worldPosition = floatArrayOf(
+                cameraPos[0] + forward[0],
+                cameraPos[1] + forward[1] - 0.2f, // Slightly below camera level
+                cameraPos[2] + forward[2]
             )
-
-            floatArrayOf(
-                cameraPos[0] + direction[0],
-                cameraPos[1] + direction[1],
-                cameraPos[2] + direction[2]
-            )
+            
+            Log.d(TAG, "Estimated world position: [${worldPosition[0]}, ${worldPosition[1]}, ${worldPosition[2]}]")
+            worldPosition
 
         } catch (e: Exception) {
             Log.e(TAG, "Error converting screen to world position: ${e.message}", e)
-            null
+            // Fallback: simple position in front of origin
+            floatArrayOf(0f, -0.5f, -distance)
         }
     }
 

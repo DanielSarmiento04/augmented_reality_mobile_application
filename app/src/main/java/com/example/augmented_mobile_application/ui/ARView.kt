@@ -455,14 +455,30 @@ fun ARView(
                                     try {
                                         Log.i(TAG, "Configuring ARCore session with stability settings...")
                                         
-                                        // Core session configuration
+                                        // Core session configuration for stability
                                         config.focusMode = Config.FocusMode.AUTO
-                                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                                        config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                                         config.lightEstimationMode = Config.LightEstimationMode.DISABLED
                                         config.depthMode = Config.DepthMode.DISABLED
                                         
-                                        // CRITICAL: Set to BLOCKING to ensure monotonic timestamps
-                                        config.updateMode = Config.UpdateMode.BLOCKING
+                                        // Use LATEST_CAMERA_IMAGE for better sensor compatibility 
+                                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                                        
+                                        // Disable all advanced modes to reduce resource usage
+                                        try {
+                                            config.instantPlacementMode = Config.InstantPlacementMode.DISABLED
+                                        } catch (e: Exception) {
+                                            Log.w(TAG, "InstantPlacementMode not available: ${e.message}")
+                                        }
+                                        
+                                        // Disable geospatial mode if available
+                                        try {
+                                            // For newer ARCore versions
+                                            val geospatialModeMethod = config.javaClass.getMethod("setGeospatialMode", Int::class.java)
+                                            geospatialModeMethod.invoke(config, 0) // DISABLED = 0
+                                        } catch (e: Exception) {
+                                            Log.d(TAG, "Geospatial mode not available: ${e.message}")
+                                        }
                                         
                                         // Set camera texture name after GL context is ready
                                         sceneView.post {
@@ -550,7 +566,7 @@ fun ARView(
                     .pointerInteropFilter { event ->
                         when (event.action) {
                             MotionEvent.ACTION_DOWN -> {
-                                if (maintenanceStarted && !modelPlaced && isPlacementReady) {
+                                if (maintenanceStarted && !modelPlaced) {
                                     arSceneViewRef.value?.let { arSceneView ->
                                         try {
                                             val frame = arSceneView.frame
@@ -572,11 +588,37 @@ fun ARView(
                                                         if (placementSuccess == true) {
                                                             modelPlaced = true
                                                             currentStepIndex = maxOf(1, currentStepIndex)
-                                                            Log.i(TAG, "Model placed successfully")
+                                                            Log.i(TAG, "Model placed successfully at hit test position")
+                                                        } else {
+                                                            Log.w(TAG, "Model placement failed at hit test position")
+                                                        }
+                                                    } else {
+                                                        // Fallback: Try placing at estimated position when no valid hit
+                                                        Log.i(TAG, "No valid hit found, trying estimated placement")
+                                                        val placementSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                                            event.x, event.y, 1.5f
+                                                        )
+                                                        if (placementSuccess == true) {
+                                                            modelPlaced = true
+                                                            currentStepIndex = maxOf(1, currentStepIndex)
+                                                            Log.i(TAG, "Model placed successfully at estimated position")
+                                                        } else {
+                                                            Log.w(TAG, "Model placement failed at estimated position")
                                                         }
                                                     }
                                                 } catch (e: Exception) {
                                                     Log.e(TAG, "Error during hit test: ${e.message}", e)
+                                                }
+                                            } else {
+                                                // Fallback when tracking isn't perfect
+                                                Log.i(TAG, "Camera not tracking, attempting estimated placement")
+                                                val placementSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                                    event.x, event.y, 1.5f
+                                                )
+                                                if (placementSuccess == true) {
+                                                    modelPlaced = true
+                                                    currentStepIndex = maxOf(1, currentStepIndex)
+                                                    Log.i(TAG, "Model placed successfully at estimated position (no tracking)")
                                                 }
                                             }
                                         } catch (e: Exception) {
@@ -686,10 +728,9 @@ fun ARView(
                     Text(
                         text = when {
                             !isArSceneViewInitialized -> "Iniciando vista AR..."
-                            isLoadingModel -> "Cargando modelo..."
+                            isLoadingModel -> "Cargando modelo 3D..."
                             !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
-                            !isPlacementReady -> "Mueva el dispositivo lentamente para detectar superficies"
-                            else -> "Toque en una superficie plana para colocar el modelo 3D"
+                            else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
                         },
                         color = Color.White,
                         textAlign = TextAlign.Center,
@@ -723,6 +764,37 @@ fun ARView(
                             color = Color.White,
                             fontSize = 16.sp
                         )
+                    }
+                    
+                    // Add a force placement button for debugging/fallback
+                    if (maintenanceStarted && !modelPlaced && !isLoadingModel) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                // Force place model at center of screen
+                                val placementSuccess = modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                                    0.5f, 0.5f, 1.5f
+                                )
+                                if (placementSuccess == true) {
+                                    modelPlaced = true
+                                    currentStepIndex = maxOf(1, currentStepIndex)
+                                    Log.i(TAG, "Model force-placed at center")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary,
+                                disabledContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth(0.8f)
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Colocar Modelo (Forzar)",
+                                color = Color.White,
+                                fontSize = 14.sp
+                            )
+                        }
                     }
                 }
             }

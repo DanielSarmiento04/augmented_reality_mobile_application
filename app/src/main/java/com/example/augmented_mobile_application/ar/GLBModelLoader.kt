@@ -53,6 +53,12 @@ object GLBModelLoader {
                             assetFileLocation = modelPath
                         )
                         
+                        if (modelInstance == null) {
+                            Log.e(TAG, "ModelInstance creation failed - returned null")
+                            continuation.resume(null) {}
+                            return@post
+                        }
+                        
                         // Create ModelNode wrapper
                         val node = ModelNode(
                             modelInstance = modelInstance,
@@ -61,12 +67,14 @@ object GLBModelLoader {
                             this.scale = Scale(scale, scale, scale)
                             isShadowReceiver = false
                             isShadowCaster = true
+                            isVisible = true // Explicitly set visible
                         }
                         
                         // Setup animations if available
                         setupAnimations(node, modelInstance)
                         
                         Log.i(TAG, "GLB model loaded successfully: $modelPath")
+                        Log.d(TAG, "Model scale: ${node.scale}, visible: ${node.isVisible}")
                         continuation.resume(node) {}
                         
                     } catch (e: Exception) {
