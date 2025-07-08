@@ -42,52 +42,29 @@ class ModelPlacementCoordinator(
     val placementPosition: StateFlow<Position?> = _placementPosition
 
     /**
-     * Load the 3D model template with path validation and caching
+     * Load the 3D model template with enhanced GLBModelLoader
      */
     suspend fun loadModel(modelPath: String): Boolean {
         return try {
             // Clear any existing model first
             clearModel()
             
-            Log.i(TAG, "Loading 3D model from: $modelPath")
+            Log.i(TAG, "Loading 3D model using GLBModelLoader: $modelPath")
             
-            // Use cache manager for optimized loading
-            modelTemplate = cacheManager.getOrLoadModel(modelPath) { path ->
-                val modelInstance = arSceneView.modelLoader.createModelInstance(
-                    assetFileLocation = path
-                )
-                
-                ModelNode(
-                    modelInstance = modelInstance,
-                    scaleToUnits = 1.0f
-                ).apply {
-                    isShadowReceiver = false
-                    isShadowCaster = true
-                    scale = Scale(DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE, DEFAULT_MODEL_SCALE)
-                    
-                    // Enhanced animation setup
-                    try {
-                        val animator = modelInstance.animator
-                        if (animator != null) {
-                            Log.i(TAG, "Model has animator available")
-                            // Animator is available, animations will play automatically
-                            Log.i(TAG, "Animation setup complete")
-                        } else {
-                            Log.d(TAG, "Model has no animator")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Could not setup animation: ${e.message}")
-                    }
-                }
-            }
+            // Use enhanced GLB loader with proper thread management
+            modelTemplate = GLBModelLoader.loadGLBModel(
+                arSceneView = arSceneView,
+                modelPath = modelPath,
+                scale = DEFAULT_MODEL_SCALE
+            )
             
             val success = modelTemplate != null
             _isModelLoaded.value = success
             
             if (success) {
-                Log.i(TAG, "3D model loaded successfully from: $modelPath")
+                Log.i(TAG, "Model loaded successfully with GLBModelLoader: $modelPath")
             } else {
-                Log.e(TAG, "Failed to load 3D model from: $modelPath")
+                Log.e(TAG, "Failed to load model with GLBModelLoader: $modelPath")
             }
             
             success
@@ -307,36 +284,30 @@ class ModelPlacementCoordinator(
     }
 
     /**
-     * Start animation for the placed model
+     * Setup model animation with simplified approach
+     */
+    private fun setupModelAnimation(modelInstance: io.github.sceneview.model.ModelInstance) {
+        try {
+            val animator = modelInstance.animator
+            if (animator != null && animator.animationCount > 0) {
+                Log.i(TAG, "Model has ${animator.animationCount} animations available")
+                
+                // Simply log that animations are available - let SceneView handle playback
+                Log.i(TAG, "Animation setup complete - animations will auto-play")
+            } else {
+                Log.d(TAG, "Model has no animations")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not setup model animation: ${e.message}", e)
+        }
+    }
+
+    /**
+     * Start animation for the placed model using GLBModelLoader
      */
     private fun startModelAnimation(modelNode: ModelNode) {
         try {
-            val modelInstance = modelNode.modelInstance
-            val animator = modelInstance.animator
-            if (animator != null) {
-                Log.i(TAG, "Starting animation for placed model")
-                
-                // Try to start animation - different APIs may be available
-                try {
-                    // Method 1: Try direct play if available
-                    val playMethod = animator.javaClass.getDeclaredMethod("play")
-                    playMethod.invoke(animator)
-                    Log.i(TAG, "Animation started with play() method")
-                } catch (e: Exception) {
-                    Log.d(TAG, "play() method not available, trying alternative: ${e.message}")
-                    
-                    // Method 2: Try setting time-based animation
-                    try {
-                        val setTimeMethod = animator.javaClass.getDeclaredMethod("setAnimationTime", Float::class.java)
-                        setTimeMethod.invoke(animator, 0f)
-                        Log.i(TAG, "Animation started with setAnimationTime() method")
-                    } catch (e2: Exception) {
-                        Log.w(TAG, "Could not start animation with available methods: ${e2.message}")
-                    }
-                }
-            } else {
-                Log.d(TAG, "Model has no animator to start")
-            }
+            GLBModelLoader.startAnimations(arSceneView, modelNode)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting model animation: ${e.message}", e)
         }
@@ -401,11 +372,33 @@ class ModelPlacementCoordinator(
     }
 
     /**
-     * Cleanup resources
+     * Cleanup resources with proper thread management
      */
     fun cleanup() {
-        removeCurrentModel()
-        modelTemplate = null
-        _isModelLoaded.value = false
+        try {
+            // Clear current model first
+            removeCurrentModel()
+            
+            // Clear template on render thread if available
+            modelTemplate?.let { template ->
+                // Post cleanup to render thread
+                arSceneView.post {
+                    try {
+                        template.destroy()
+                        Log.d(TAG, "Model template destroyed on render thread")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error destroying model template: ${e.message}", e)
+                    }
+                }
+            }
+            
+            modelTemplate = null
+            _isModelLoaded.value = false
+            
+            Log.i(TAG, "ModelPlacementCoordinator cleanup completed")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during cleanup: ${e.message}", e)
+        }
     }
 }

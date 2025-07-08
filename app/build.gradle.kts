@@ -55,6 +55,31 @@ android {
     }
     ndkVersion = "27.0.12077973"
     buildToolsVersion = "34.0.0"
+
+    // Native development kit configuration - DISABLED temporarily for compilation
+    // externalNativeBuild {
+    //     cmake {
+    //         path = file("src/main/cpp/CMakeLists.txt")
+    //         version = "3.22.1"
+    //     }
+    // }
+
+    defaultConfig {        // NDK configuration - DISABLED temporarily
+        // ndk {
+        //     abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        // }
+        
+        // CMake arguments for optimization - DISABLED temporarily
+        // externalNativeBuild {
+        //     cmake {
+        //         cppFlags += listOf("-std=c++17", "-O3", "-DANDROID")
+        //         arguments += listOf(
+        //             "-DANDROID_TOOLCHAIN=clang",
+        //             "-DANDROID_STL=c++_shared"
+        //         )
+        //     }
+        // }
+    }
 }
 
 dependencies {

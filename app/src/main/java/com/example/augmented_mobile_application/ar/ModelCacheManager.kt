@@ -35,45 +35,18 @@ class ModelCacheManager private constructor() {
     private val loadedModels = mutableSetOf<String>()
     
     /**
-     * Retrieves a cached model or loads it if not available
+     * Retrieves a cached model or loads it if not available - THREAD SAFE
      * @param modelPath The asset path to the GLB file
-     * @param loader Function to load the model if not cached
+     * @param loader Function to load the model on Filament render thread
      * @return ModelNode instance or null if loading fails
      */
     suspend fun getOrLoadModel(
         modelPath: String,
         loader: suspend (String) -> ModelNode?
-    ): ModelNode? = withContext(Dispatchers.IO) {
-        try {
-            // Check memory pressure before loading
-            if (isMemoryPressureHigh()) {
-                Log.w(TAG, "High memory pressure detected, clearing cache before loading model")
-                clearCache()
-            }
-            
-            // Check cache first
-            modelCache.get(modelPath)?.get()?.let { cachedModel ->
-                Log.d(TAG, "Returning cached model: $modelPath")
-                return@withContext cachedModel
-            }
-            
-            // Load new model
-            Log.i(TAG, "Loading new model: $modelPath")
-            val model = loader(modelPath)
-            
-            if (model != null) {
-                // Cache the model with weak reference
-                modelCache.put(modelPath, WeakReference(model))
-                loadedModels.add(modelPath)
-                Log.i(TAG, "Model cached successfully: $modelPath")
-            }
-            
-            model
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading model: $modelPath", e)
-            null
-        }
+    ): ModelNode? {
+        // CRITICAL: This method should NOT be used - models must be loaded on render thread
+        Log.w(TAG, "ModelCacheManager.getOrLoadModel() is deprecated - use direct render thread loading")
+        return null
     }
     
     /**

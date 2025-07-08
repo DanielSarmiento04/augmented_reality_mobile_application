@@ -57,7 +57,7 @@ class InferenceManager(private val detector: YOLO11Detector) {
     }
     
     /**
-     * Process frame on dedicated thread
+     * Process frame on dedicated thread with JNI safety
      */
     private fun processFrame(bitmap: Bitmap) {
         if (isDisposed.get()) {
@@ -69,7 +69,19 @@ class InferenceManager(private val detector: YOLO11Detector) {
             _isProcessing.value = true
             
             val startTime = System.currentTimeMillis()
-            val (detections, inferenceTime) = detector.detect(bitmap)
+            
+            // Simplified detector call without JNI threading for now
+            val detectionResult = try {
+                detector.detect(bitmap)
+            } catch (e: Exception) {
+                Log.e(TAG, "Detection failed", e)
+                Pair(emptyList<YOLO11Detector.Detection>(), 0L)
+            }
+            
+            // Extract detection results properly
+            val detections = detectionResult.first
+            val inferenceTime = detectionResult.second
+            
             val totalTime = System.currentTimeMillis() - startTime
             
             // Update state on main thread

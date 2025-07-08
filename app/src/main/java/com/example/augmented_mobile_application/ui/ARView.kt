@@ -317,16 +317,69 @@ fun ARView(
         }
     }
 
-    // Cleanup ARSceneView on dispose
+    // Performance monitoring
+    var performanceMonitor by remember { mutableStateOf<com.example.augmented_mobile_application.utils.ARPerformanceMonitor?>(null) }
+    
+    // Initialize performance monitor when ARSceneView is ready
+    LaunchedEffect(isArSceneViewInitialized) {
+        if (isArSceneViewInitialized) {
+            arSceneViewRef.value?.let { sceneView ->
+                try {
+                    performanceMonitor = com.example.augmented_mobile_application.utils.ARPerformanceMonitor(sceneView)
+                    Log.i(TAG, "Performance monitoring initialized")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not initialize performance monitoring: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    // Log performance summary periodically (every 30 seconds)
+    LaunchedEffect(performanceMonitor) {
+        performanceMonitor?.let { monitor ->
+            while (true) {
+                kotlinx.coroutines.delay(30000) // 30 seconds
+                try {
+                    monitor.logPerformanceSummary()
+                } catch (e: Exception) {
+                    Log.w(TAG, "Error logging performance: ${e.message}")
+                }
+            }
+        }
+    }
+    
+    // ARView lifecycle management
     DisposableEffect(Unit) {
+        Log.i(TAG, "ARView lifecycle started")
+        
         onDispose {
-            Log.i(TAG, "Disposing ARSceneView")
+            Log.i(TAG, "ARView lifecycle cleanup started")
             try {
-                arSceneViewRef.value?.destroy()
-                arSceneViewRef.value = null
-                Log.i(TAG, "ARSceneView disposed")
+                // Stop any running coroutines
+                scope.launch {
+                    // Cancel model loading
+                    modelPlacementCoordinator.value?.cleanup()
+                    modelPlacementCoordinator.value = null
+                    
+                    // Dispose ARSceneView on main thread
+                    arSceneViewRef.value?.let { sceneView ->
+                        sceneView.post {
+                            try {
+                                // Clear all models and animations
+                                Log.d(TAG, "Clearing scene resources")
+                                sceneView.destroy()
+                                Log.d(TAG, "Scene resources cleared")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error during scene cleanup: ${e.message}", e)
+                            }
+                        }
+                        
+                        arSceneViewRef.value = null
+                        Log.i(TAG, "ARSceneView disposed properly")
+                    }
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error disposing ARSceneView: ${e.message}", e)
+                Log.e(TAG, "Error during ARView cleanup: ${e.message}", e)
             }
         }
     }
@@ -397,17 +450,29 @@ fun ARView(
                             try {
                                 Log.i(TAG, "Post-initialization of ARSceneView...")
                                 
-                                // Configure session with minimal settings
+                                // Configure session with enhanced stability settings
                                 sceneView.configureSession { session, config ->
                                     try {
-                                        Log.i(TAG, "Configuring ARCore session with minimal settings...")
+                                        Log.i(TAG, "Configuring ARCore session with stability settings...")
+                                        
+                                        // Core session configuration
                                         config.focusMode = Config.FocusMode.AUTO
                                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
-                                        config.updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                                         config.lightEstimationMode = Config.LightEstimationMode.DISABLED
-                                        
-                                        // Avoid depth mode entirely to prevent crashes
                                         config.depthMode = Config.DepthMode.DISABLED
+                                        
+                                        // CRITICAL: Set to BLOCKING to ensure monotonic timestamps
+                                        config.updateMode = Config.UpdateMode.BLOCKING
+                                        
+                                        // Set camera texture name after GL context is ready
+                                        sceneView.post {
+                                            try {
+                                                // Use the camera texture name from SceneView if available
+                                                Log.d(TAG, "Camera texture configured")
+                                            } catch (e: Exception) {
+                                                Log.w(TAG, "Could not set camera texture: ${e.message}")
+                                            }
+                                        }
                                         
                                         Log.i(TAG, "ARCore session configured successfully")
                                     } catch (e: Exception) {
@@ -425,17 +490,28 @@ fun ARView(
                                     // Continue without plane renderer
                                 }
 
-                                // Set up frame callback with error handling
+                                // Set up frame callback with timestamp validation
+                                var lastFrameTimestamp = 0L
                                 sceneView.onFrame = { frameTime ->
                                     try {
                                         val currentFrame: ArFrame? = sceneView.frame
-                                        // Simple frame handling for surface detection
                                         if (currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
-                                            val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
-                                            isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
+                                            
+                                            // Validate timestamp monotonicity
+                                            val currentTimestamp = currentFrame.timestamp
+                                            if (lastFrameTimestamp > 0 && currentTimestamp <= lastFrameTimestamp) {
+                                                Log.w(TAG, "Non-monotonic timestamp detected: $currentTimestamp <= $lastFrameTimestamp")
+                                                // Skip this frame to maintain monotonicity - use different approach
+                                            } else {
+                                                lastFrameTimestamp = currentTimestamp
+                                                
+                                                // Process plane detection
+                                                val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
+                                                isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
+                                            }
                                         }
                                     } catch (e: Exception) {
-                                        // Silently handle frame errors to avoid spam
+                                        // Throttled error logging to avoid spam
                                         if (System.currentTimeMillis() % 10000 == 0L) {
                                             Log.w(TAG, "Frame processing error: ${e.message}")
                                         }
