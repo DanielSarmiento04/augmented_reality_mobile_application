@@ -1009,102 +1009,106 @@ private fun BottomNavigationPane(
     onForcePlacement: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = Color.White.copy(alpha = 0.95f),
-        tonalElevation = 8.dp,
-        shadowElevation = 8.dp
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+            .background(Color.Transparent),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            if (modelPlaced) {
-                // Navigation controls when model is placed
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
+        if (modelPlaced) {
+            // Navigation controls when model is placed
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Previous button
+                OutlinedButton(
+                    onClick = onPreviousStep,
+                    enabled = canNavigatePrevious,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color.Black.copy(alpha = 0.3f),
+                        contentColor = Color.White,
+                        disabledContainerColor = Color.Black.copy(alpha = 0.1f),
+                        disabledContentColor = Color.White.copy(alpha = 0.5f)
+                    )
                 ) {
-                    // Previous button
-                    OutlinedButton(
-                        onClick = onPreviousStep,
-                        enabled = canNavigatePrevious,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = DarkGreen
-                        )
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Previous step",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Anterior")
-                    }
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Previous step",
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Anterior")
+                }
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                Spacer(modifier = Modifier.width(12.dp))
 
-                    // Next/Finish button
-                    Button(
-                        onClick = onNextStep,
-                        enabled = canNavigateNext,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = DarkGreen,
-                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
-                        )
-                    ) {
-                        Text(nextButtonText)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Icon(
-                            if (nextButtonText == "Finalizar") Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = nextButtonText,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+                // Next/Finish button
+                Button(
+                    onClick = onNextStep,
+                    enabled = canNavigateNext,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DarkGreen.copy(alpha = 0.8f),
+                        contentColor = Color.White,
+                        disabledContainerColor = DarkGreen.copy(alpha = 0.3f),
+                        disabledContentColor = Color.White.copy(alpha = 0.5f)
+                    )
+                ) {
+                    Text(nextButtonText)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        if (nextButtonText == "Finalizar") Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = nextButtonText,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        } else {
+            if (!maintenanceStarted) {
+                // Start maintenance button
+                Button(
+                    onClick = onStartMaintenance,
+                    enabled = !isLoadingModel && isArSceneViewInitialized,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = DarkGreen.copy(alpha = 0.8f),
+                        contentColor = Color.White,
+                        disabledContainerColor = DarkGreen.copy(alpha = 0.3f),
+                        disabledContentColor = Color.White.copy(alpha = 0.5f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = "Start",
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Iniciar Mantenimiento",
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
             } else {
-                if (!maintenanceStarted) {
-                    // Start maintenance button
+                // Force placement button
+                if (!modelPlaced && !isLoadingModel) {
                     Button(
-                        onClick = onStartMaintenance,
-                        enabled = !isLoadingModel && isArSceneViewInitialized,
+                        onClick = onForcePlacement,
+                        modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = DarkGreen,
-                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                            containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f),
+                            contentColor = Color.White
+                        )
                     ) {
                         Icon(
-                            Icons.Default.PlayArrow,
-                            contentDescription = "Start",
-                            modifier = Modifier.size(20.dp)
+                            Icons.Default.Place,
+                            contentDescription = "Force place",
+                            modifier = Modifier.size(16.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = "Iniciar Mantenimiento",
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    }
-                } else {
-                    // Force placement button
-                    if (!modelPlaced && !isLoadingModel) {
-                        Button(
-                            onClick = onForcePlacement,
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondary
-                            )
-                        ) {
-                            Icon(
-                                Icons.Default.Place,
-                                contentDescription = "Force place",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Colocar Modelo", style = MaterialTheme.typography.labelMedium)
-                        }
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Colocar Modelo", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
