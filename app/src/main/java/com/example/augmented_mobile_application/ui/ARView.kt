@@ -682,6 +682,9 @@ fun ARView(
                                                     arViewModel.onModelPlaced()
                                                     Log.i(TAG, "Model placed at estimated position (no tracking)")
                                                 }
+                                                else {
+
+                                                }
                                             }
                                         } catch (e: Exception) {
                                             Log.e(TAG, "Error during model placement: ${e.message}", e)
