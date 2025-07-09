@@ -1088,29 +1088,6 @@ private fun BottomNavigationPane(
                     }
                 }
             } else {
-                // Status text
-                Text(
-                    text = when {
-                        !isArSceneViewInitialized -> "Iniciando vista AR..."
-                        isLoadingModel -> "Cargando modelo 3D..."
-                        !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
-                        surfaceQuality?.isGoodQuality == true -> "Superficie detectada - Toque para colocar el modelo"
-                        surfaceQuality != null -> "Calidad de superficie: ${(surfaceQuality.score * 100).toInt()}% - Mejore la superficie o use colocación forzada"
-                        else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Black,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .background(
-                            Color.Black.copy(alpha = 0.1f),
-                            shape = RoundedCornerShape(8.dp)
-                        )
-                        .padding(12.dp)
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
                 if (!maintenanceStarted) {
                     // Start maintenance button
                     Button(
