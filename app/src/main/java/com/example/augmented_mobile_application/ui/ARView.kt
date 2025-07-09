@@ -2,10 +2,14 @@ package com.example.augmented_mobile_application.ui
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,6 +27,14 @@ import androidx.navigation.NavHostController
 import android.view.MotionEvent
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.example.augmented_mobile_application.viewmodel.ARViewModel
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.ar.node.AnchorNode
 import com.google.ar.core.Config
@@ -59,32 +71,30 @@ fun ARView(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     
+    // Initialize ViewModel with factory
+    val arViewModel: ARViewModel = viewModel(
+        factory = viewModelFactory {
+            initializer {
+                ARViewModel(context)
+            }
+        }
+    )
+    
+    // Collect ViewModel state
+    val currentStep by arViewModel.currentStep.collectAsState()
+    val totalSteps by arViewModel.totalSteps.collectAsState()
+    val stepDescription by arViewModel.stepDescription.collectAsState()
+    val isLoadingRoutine by arViewModel.isLoadingRoutine.collectAsState()
+    val maintenanceStarted by arViewModel.maintenanceStarted.collectAsState()
+    val modelPlaced by arViewModel.modelPlaced.collectAsState()
+    
     // Determine the model path - use provided glbPath or default
     val modelPath = glbPath ?: "pump/pump.glb"
-    
-    // Routine loading state
-    var currentRoutine by remember { mutableStateOf<MaintenanceRoutine?>(null) }
-    var currentStepIndex by remember { mutableStateOf(0) }
-    var isLoadingRoutine by remember { mutableStateOf(false) }
     
     // Load routine if routineId is provided
     LaunchedEffect(routineId) {
         if (routineId != null) {
-            isLoadingRoutine = true
-            try {
-                val repository = RoutineRepository.getInstance(context)
-                val result = repository.getRoutine(routineId)
-                result.onSuccess { routine ->
-                    currentRoutine = routine
-                    Log.i(TAG, "Loaded routine: ${routine.displayName} with ${routine.steps.size} steps")
-                }.onFailure { error ->
-                    Log.e(TAG, "Failed to load routine: $routineId", error)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading routine: $routineId", e)
-            } finally {
-                isLoadingRoutine = false
-            }
+            arViewModel.loadRoutine(routineId)
         }
     }
     
@@ -259,20 +269,10 @@ fun ARView(
 
     // Core AR state
     var isLoadingModel by remember { mutableStateOf(true) }
-    var maintenanceStarted by remember { mutableStateOf(false) }
-    var modelPlaced by remember { mutableStateOf(false) }
     
     // Surface detection state
     var isPlacementReady by remember { mutableStateOf(false) }
     var surfaceQuality by remember { mutableStateOf<com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality?>(null) }
-
-    // Get instructions from loaded routine or use default
-    val instructions = currentRoutine?.steps?.map { it.instruction } ?: listOf(
-        "Mueva lentamente el dispositivo para detectar superficies planas",
-        "Verificar que la bomba esté apagada",
-        "Inspeccionar el estado general de la bomba",
-        "Mantenimiento completado con éxito"
-    )
 
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }
@@ -651,8 +651,7 @@ fun ARView(
                                                         // Place on validated surface
                                                         val placementSuccess = coordinator?.placeModelAtHitResult(validHit)
                                                         if (placementSuccess == true) {
-                                                            modelPlaced = true
-                                                            currentStepIndex = maxOf(1, currentStepIndex)
+                                                            arViewModel.onModelPlaced()
                                                             Log.i(TAG, "Model placed successfully on validated surface")
                                                         } else {
                                                             Log.w(TAG, "Model placement failed despite good surface quality")
@@ -664,8 +663,7 @@ fun ARView(
                                                             event.x, event.y, 1.5f
                                                         )
                                                         if (placementSuccess == true) {
-                                                            modelPlaced = true
-                                                            currentStepIndex = maxOf(1, currentStepIndex)
+                                                            arViewModel.onModelPlaced()
                                                             Log.i(TAG, "Model placed at estimated position")
                                                         } else {
                                                             Log.w(TAG, "Model placement failed at estimated position")
@@ -681,8 +679,7 @@ fun ARView(
                                                     event.x, event.y, 1.5f
                                                 )
                                                 if (placementSuccess == true) {
-                                                    modelPlaced = true
-                                                    currentStepIndex = maxOf(1, currentStepIndex)
+                                                    arViewModel.onModelPlaced()
                                                     Log.i(TAG, "Model placed at estimated position (no tracking)")
                                                 }
                                             }
@@ -699,228 +696,487 @@ fun ARView(
             )
         }
 
-        // Main UI overlay
+        // Main UI overlay with two-pane layout
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.SpaceBetween
+                .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            // Top section with instruction card and surface quality
-            Column {
-                // Instruction card
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = Color.White.copy(alpha = 0.9f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+            // Top pane - Step information (expandable)
+            TopStepPane(
+                machineSelected = machine_selected,
+                stepDescription = stepDescription,
+                currentStep = currentStep,
+                totalSteps = totalSteps,
+                progress = arViewModel.getProgress(),
+                isLoadingModel = isLoadingModel,
+                maintenanceStarted = maintenanceStarted,
+                modelPlaced = modelPlaced,
+                surfaceQuality = surfaceQuality,
+                tips = arViewModel.getCurrentStepTips(),
+                mediaPath = arViewModel.getCurrentStepMedia(),
+                modifier = Modifier.weight(1f)
+            )
+            
+            // Bottom pane - Fixed navigation bar
+            BottomNavigationPane(
+                maintenanceStarted = maintenanceStarted,
+                modelPlaced = modelPlaced,
+                isLoadingModel = isLoadingModel,
+                isArSceneViewInitialized = isArSceneViewInitialized,
+                surfaceQuality = surfaceQuality,
+                canNavigatePrevious = arViewModel.canNavigatePrevious(),
+                canNavigateNext = arViewModel.canNavigateNext(),
+                nextButtonText = arViewModel.getNextButtonText(),
+                onStartMaintenance = { arViewModel.startMaintenance() },
+                onPreviousStep = { arViewModel.navigateToPreviousStep() },
+                onNextStep = { 
+                    val isFinished = arViewModel.navigateToNextStep()
+                    if (isFinished) {
+                        arViewModel.resetRoutine()
+                        modelPlacementCoordinator.value?.removeCurrentModel()
+                        navController.navigateUp()
+                    }
+                },
+                onCancel = { 
+                    arViewModel.resetRoutine()
+                    modelPlacementCoordinator.value?.removeCurrentModel()
+                    navController.navigateUp() 
+                },
+                onForcePlacement = {
+                    // Try to place on best detected surface first, then fallback to center
+                    val bestSurface = surfaceChecker.bestSurface.value
+                    val placementSuccess = if (bestSurface != null) {
+                        // Use best detected surface
+                        modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                            bestSurface.centerX, bestSurface.centerY, 1.5f
+                        )
+                    } else {
+                        // Fallback to center of screen
+                        modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
+                            0.5f, 0.5f, 1.5f
+                        )
+                    }
+                    
+                    if (placementSuccess == true) {
+                        arViewModel.onModelPlaced()
+                        Log.i(TAG, "Model force-placed ${if (bestSurface != null) "on best surface" else "at center"}")
+                    }
+                },
+                modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+            )
+        }
+    }
+}
+
+/**
+ * Top pane containing step information with animation
+ */
+@Composable
+private fun TopStepPane(
+    machineSelected: String,
+    stepDescription: String,
+    currentStep: Int,
+    totalSteps: Int,
+    progress: Float,
+    isLoadingModel: Boolean,
+    maintenanceStarted: Boolean,
+    modelPlaced: Boolean,
+    surfaceQuality: com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality?,
+    tips: List<String>,
+    mediaPath: String?,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(16.dp)
+    ) {
+        // Main instruction card with animation
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .animateContentSize(),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.White.copy(alpha = 0.95f)
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp)
+            ) {
+                // Header with machine name
+                Text(
+                    text = machineSelected,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = DarkGreen
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Progress indicator (when maintenance started)
+                if (maintenanceStarted && totalSteps > 1) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = machine_selected,
-                            fontSize = 18.sp,
+                            text = "Paso $currentStep de ${totalSteps - 1}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = DarkGreen
+                        )
+                        Text(
+                            text = "${(progress * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
                             color = DarkGreen
                         )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = instructions[currentStepIndex],
-                            fontSize = 16.sp,
-                            color = Color.Black
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = DarkGreen,
+                        trackColor = DarkGreen.copy(alpha = 0.2f)
+                    )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                
+                // Step description with crossfade animation
+                Crossfade(
+                    targetState = stepDescription,
+                    label = "step_description"
+                ) { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.Black,
+                        lineHeight = 24.sp
+                    )
+                }
+                
+                // Loading indicator
+                if (isLoadingModel) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = DarkGreen
+                    )
+                }
+                
+                // Tips section (if available)
+                if (tips.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
                         )
-                        
-                        // Loading indicator
-                        if (isLoadingModel) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            LinearProgressIndicator(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = DarkGreen
-                            )
-                        }
-                        
-                        // Surface quality indicator
-                        if (maintenanceStarted && !modelPlaced && surfaceQuality != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Card(
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (surfaceQuality!!.isGoodQuality) 
-                                        Color.Green.copy(alpha = 0.1f) else Color(0xFFFFA500).copy(alpha = 0.1f) // Orange
-                                ),
-                                modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Calidad de Superficie:",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                        Text(
-                                            text = "${(surfaceQuality!!.score * 100).toInt()}%",
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (surfaceQuality!!.isGoodQuality) Color.Green else Color(0xFFFFA500) // Orange
-                                        )
-                                    }
-                                    
-                                    if (surfaceQuality!!.issues.isNotEmpty()) {
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        surfaceQuality!!.issues.take(2).forEach { issue ->
-                                            Text(
-                                                text = "• $issue",
-                                                fontSize = 10.sp,
-                                                color = Color.Gray
-                                            )
-                                        }
-                                    }
-                                }
+                                Icon(
+                                    Icons.Default.Lightbulb,
+                                    contentDescription = "Tips",
+                                    tint = DarkGreen,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Consejos:",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = DarkGreen
+                                )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            tips.forEach { tip ->
+                                Text(
+                                    text = "• $tip",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Black,
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                )
                             }
                         }
                     }
                 }
-
-            // Bottom controls
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                if (modelPlaced) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                
+                // Media section (if available)
+                mediaPath?.let { path ->
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.3f)
+                        )
                     ) {
-                        Button(
-                            onClick = {
-                                if (currentStepIndex > 1) {
-                                    currentStepIndex--
-                                }
-                            },
-                            enabled = maintenanceStarted && currentStepIndex > 1,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = DarkGreen,
-                                disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
-                            )
+                        Row(
+                            modifier = Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Anterior")
-                        }
-
-                        Button(
-                            onClick = {
-                                if (currentStepIndex < instructions.size - 1) {
-                                    currentStepIndex++
-                                } else {
-                                    // Finish maintenance
-                                    maintenanceStarted = false
-                                    modelPlaced = false
-                                    currentStepIndex = 0
-                                    modelPlacementCoordinator.value?.removeCurrentModel()
-                                    navController.navigateUp()
-                                }
-                            },
-                            enabled = maintenanceStarted,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = DarkGreen,
-                                disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
+                            Icon(
+                                Icons.Default.PlayCircle,
+                                contentDescription = "Media",
+                                tint = DarkGreen,
+                                modifier = Modifier.size(20.dp)
                             )
-                        ) {
-                            Text(text = if (currentStepIndex < instructions.size - 1) "Siguiente" else "Finalizar")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Material de apoyo disponible",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = DarkGreen
+                            )
                         }
                     }
-                } else {
-                    Text(
-                        text = when {
-                            !isArSceneViewInitialized -> "Iniciando vista AR..."
-                            isLoadingModel -> "Cargando modelo 3D..."
-                            !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
-                            surfaceQuality?.isGoodQuality == true -> "Superficie detectada - Toque para colocar el modelo"
-                            surfaceQuality != null -> "Calidad de superficie: ${(surfaceQuality!!.score * 100).toInt()}% - Mejore la superficie o use colocación forzada"
-                            else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
-                        },
-                        color = Color.White,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .background(
-                                Color.Black.copy(alpha = 0.7f),
-                                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                            )
-                            .padding(12.dp)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                // Surface quality indicator
+                if (maintenanceStarted && !modelPlaced && surfaceQuality != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SurfaceQualityCard(surfaceQuality = surfaceQuality)
+                }
+            }
+        }
+    }
+}
 
+/**
+ * Surface quality indicator card
+ */
+@Composable
+private fun SurfaceQualityCard(
+    surfaceQuality: com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (surfaceQuality.isGoodQuality) 
+                Color.Green.copy(alpha = 0.1f) else Color(0xFFFFA500).copy(alpha = 0.1f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Calidad de Superficie:",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = "${(surfaceQuality.score * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = if (surfaceQuality.isGoodQuality) Color.Green else Color(0xFFFFA500)
+                )
+            }
+            
+            if (surfaceQuality.issues.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                surfaceQuality.issues.take(2).forEach { issue ->
+                    Text(
+                        text = "• $issue",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Bottom navigation pane with persistent controls
+ */
+@Composable
+private fun BottomNavigationPane(
+    maintenanceStarted: Boolean,
+    modelPlaced: Boolean,
+    isLoadingModel: Boolean,
+    isArSceneViewInitialized: Boolean,
+    surfaceQuality: com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality?,
+    canNavigatePrevious: Boolean,
+    canNavigateNext: Boolean,
+    nextButtonText: String,
+    onStartMaintenance: () -> Unit,
+    onPreviousStep: () -> Unit,
+    onNextStep: () -> Unit,
+    onCancel: () -> Unit,
+    onForcePlacement: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = Color.White.copy(alpha = 0.95f),
+        tonalElevation = 8.dp,
+        shadowElevation = 8.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            if (modelPlaced) {
+                // Navigation controls when model is placed
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // Previous button
+                    OutlinedButton(
+                        onClick = onPreviousStep,
+                        enabled = canNavigatePrevious,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = DarkGreen
+                        )
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Previous step",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Anterior")
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Next/Finish button
                     Button(
-                        onClick = {
-                            if (!maintenanceStarted) {
-                                maintenanceStarted = true
-                                currentStepIndex = 1
-                            }
-                        },
-                        enabled = !isLoadingModel && !maintenanceStarted && isArSceneViewInitialized,
+                        onClick = onNextStep,
+                        enabled = canNavigateNext,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = DarkGreen,
+                            disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
+                        )
+                    ) {
+                        Text(nextButtonText)
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            if (nextButtonText == "Finalizar") Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = nextButtonText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    // Cancel button
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.weight(0.8f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Cancel",
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            } else {
+                // Status text
+                Text(
+                    text = when {
+                        !isArSceneViewInitialized -> "Iniciando vista AR..."
+                        isLoadingModel -> "Cargando modelo 3D..."
+                        !maintenanceStarted -> "Presione 'Iniciar Mantenimiento' para comenzar"
+                        surfaceQuality?.isGoodQuality == true -> "Superficie detectada - Toque para colocar el modelo"
+                        surfaceQuality != null -> "Calidad de superficie: ${(surfaceQuality.score * 100).toInt()}% - Mejore la superficie o use colocación forzada"
+                        else -> "Toque en la pantalla para colocar el modelo 3D o use el botón 'Colocar Modelo'"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.Black,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .background(
+                            Color.Black.copy(alpha = 0.1f),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(12.dp)
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (!maintenanceStarted) {
+                    // Start maintenance button
+                    Button(
+                        onClick = onStartMaintenance,
+                        enabled = !isLoadingModel && isArSceneViewInitialized,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = DarkGreen,
                             disabledContainerColor = DarkGreen.copy(alpha = 0.5f)
                         ),
-                        modifier = Modifier
-                            .fillMaxWidth(0.8f)
-                            .padding(vertical = 8.dp)
+                        modifier = Modifier.fillMaxWidth()
                     ) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = "Start",
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Iniciar Mantenimiento",
-                            color = Color.White,
-                            fontSize = 16.sp
+                            style = MaterialTheme.typography.labelLarge
                         )
                     }
-                    
-                    // Add a force placement button for debugging/fallback
-                    if (maintenanceStarted && !modelPlaced && !isLoadingModel) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                // Try to place on best detected surface first, then fallback to center
-                                val bestSurface = surfaceChecker.bestSurface.value
-                                val placementSuccess = if (bestSurface != null) {
-                                    // Use best detected surface
-                                    modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
-                                        bestSurface.centerX, bestSurface.centerY, 1.5f
-                                    )
-                                } else {
-                                    // Fallback to center of screen
-                                    modelPlacementCoordinator.value?.placeModelAtEstimatedPosition(
-                                        0.5f, 0.5f, 1.5f
-                                    )
-                                }
-                                
-                                if (placementSuccess == true) {
-                                    modelPlaced = true
-                                    currentStepIndex = maxOf(1, currentStepIndex)
-                                    Log.i(TAG, "Model force-placed ${if (bestSurface != null) "on best surface" else "at center"}")
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondary,
-                                disabledContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth(0.8f)
-                                .padding(vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "Colocar Modelo (Forzar)",
-                                color = Color.White,
-                                fontSize = 14.sp
+                } else {
+                    // Force placement and cancel buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Force placement button
+                        if (!modelPlaced && !isLoadingModel) {
+                            Button(
+                                onClick = onForcePlacement,
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary
+                                )
+                            ) {
+                                Icon(
+                                    Icons.Default.Place,
+                                    contentDescription = "Force place",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Colocar Modelo", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+
+                        // Cancel button
+                        OutlinedButton(
+                            onClick = onCancel,
+                            modifier = Modifier.weight(if (modelPlaced || isLoadingModel) 1f else 0.7f),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
                             )
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Cancel",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Cancelar", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
             }
         }
     }
-}
 }
