@@ -683,11 +683,14 @@ fun RoutineSelectionView(
         }
 
         // Routine cards
-        items(availableRoutines) { routine ->
-            RoutineCard(
-                routine = routine,
-                onSelect = { onRoutineSelected(routine) }
-            )
+        availableRoutines.forEachIndexed { index, routine ->
+            item {
+                RoutineCard(
+                    routine = routine,
+                    index = index + 1, // Start from 1 instead of 0
+                    onSelect = { onRoutineSelected(routine) }
+                )
+            }
         }
 
         // Action buttons
@@ -706,6 +709,7 @@ fun RoutineSelectionView(
 @Composable
 fun RoutineCard(
     routine: MaintenanceRoutine,
+    index: Int,
     onSelect: () -> Unit
 ) {
     Card(
@@ -727,7 +731,7 @@ fun RoutineCard(
                     modifier = Modifier.weight(1f)
                 ) {
                     Text(
-                        text = routine.displayName,
+                        text = "Rutina Manual | Numero $index",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = DarkGreen

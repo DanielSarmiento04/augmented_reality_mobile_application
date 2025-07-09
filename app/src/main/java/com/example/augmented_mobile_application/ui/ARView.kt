@@ -738,11 +738,6 @@ fun ARView(
                         navController.navigateUp()
                     }
                 },
-                onCancel = { 
-                    arViewModel.resetRoutine()
-                    modelPlacementCoordinator.value?.removeCurrentModel()
-                    navController.navigateUp() 
-                },
                 onForcePlacement = {
                     // Try to place on best detected surface first, then fallback to center
                     val bestSurface = surfaceChecker.bestSurface.value
@@ -1011,7 +1006,6 @@ private fun BottomNavigationPane(
     onStartMaintenance: () -> Unit,
     onPreviousStep: () -> Unit,
     onNextStep: () -> Unit,
-    onCancel: () -> Unit,
     onForcePlacement: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1069,23 +1063,6 @@ private fun BottomNavigationPane(
                             modifier = Modifier.size(16.dp)
                         )
                     }
-
-                    Spacer(modifier = Modifier.width(12.dp))
-
-                    // Cancel button
-                    OutlinedButton(
-                        onClick = onCancel,
-                        modifier = Modifier.weight(0.8f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(
-                            Icons.Default.Close,
-                            contentDescription = "Cancel",
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
                 }
             } else {
                 if (!maintenanceStarted) {
@@ -1111,45 +1088,22 @@ private fun BottomNavigationPane(
                         )
                     }
                 } else {
-                    // Force placement and cancel buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Force placement button
-                        if (!modelPlaced && !isLoadingModel) {
-                            Button(
-                                onClick = onForcePlacement,
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondary
-                                )
-                            ) {
-                                Icon(
-                                    Icons.Default.Place,
-                                    contentDescription = "Force place",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Colocar Modelo", style = MaterialTheme.typography.labelMedium)
-                            }
-                        }
-
-                        // Cancel button
-                        OutlinedButton(
-                            onClick = onCancel,
-                            modifier = Modifier.weight(if (modelPlaced || isLoadingModel) 1f else 0.7f),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
+                    // Force placement button
+                    if (!modelPlaced && !isLoadingModel) {
+                        Button(
+                            onClick = onForcePlacement,
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondary
                             )
                         ) {
                             Icon(
-                                Icons.Default.Close,
-                                contentDescription = "Cancel",
+                                Icons.Default.Place,
+                                contentDescription = "Force place",
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Cancelar", style = MaterialTheme.typography.labelMedium)
+                            Text("Colocar Modelo", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
