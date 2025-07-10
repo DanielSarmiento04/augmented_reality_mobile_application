@@ -69,30 +69,30 @@ class LightingConfigurationManager {
      */
     private fun applyBasicLightingConfiguration(arSceneView: ARSceneView) {
         try {
-            Log.d(TAG, "Applying enhanced lighting configuration for color visibility...")
+            Log.d(TAG, "Applying neutral lighting configuration to preserve original colors...")
             
-            // Configure AR session for better lighting
+            // Configure AR session for neutral lighting that doesn't wash out colors
             arSceneView.configureSession { session, config ->
                 try {
-                    // Use ambient intensity for better color rendering
+                    // Use basic ambient intensity to avoid color washing
                     config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                    Log.i(TAG, "Using AMBIENT_INTENSITY for better color visibility")
+                    Log.i(TAG, "Using neutral AMBIENT_INTENSITY lighting")
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not configure light estimation: ${e.message}")
                 }
             }
             
-            // Ensure the scene has adequate lighting for color visibility
+            // Ensure the scene lighting doesn't overpower original colors
             try {
-                // SceneView should handle this internally, but ensure proper setup
-                Log.d(TAG, "Scene lighting configured for color visibility")
+                // SceneView handles lighting - we just ensure it's not too intense
+                Log.d(TAG, "Scene lighting configured to preserve original model colors")
             } catch (e: Exception) {
-                Log.w(TAG, "Could not enhance scene lighting: ${e.message}")
+                Log.w(TAG, "Could not configure neutral scene lighting: ${e.message}")
             }
             
-            Log.d(TAG, "Enhanced lighting configuration applied for original colors")
+            Log.d(TAG, "Neutral lighting configuration applied - original colors should show")
         } catch (e: Exception) {
-            Log.e(TAG, "Enhanced lighting configuration failed: ${e.message}", e)
+            Log.e(TAG, "Neutral lighting configuration failed: ${e.message}", e)
         }
     }
     

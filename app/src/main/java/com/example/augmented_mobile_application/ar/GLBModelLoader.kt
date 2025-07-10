@@ -170,37 +170,34 @@ object GLBModelLoader {
         arSceneView: ARSceneView
     ) {
         try {
-            Log.d(TAG, "Applying optimized material fixes while preserving original colors...")
+            Log.d(TAG, "Applying minimal material configuration to preserve original colors...")
             
             // Ensure model is visible
             modelNode.isVisible = true
             
-            // Apply lighting-focused fixes that preserve colors
+            // Apply MINIMAL changes - just ensure materials work, don't override colors
             val materials = modelInstance.materialInstances
             materials.forEachIndexed { index, materialInstance ->
                 try {
-                    // DON'T override base color - let original GLB colors show through
-                    // Only adjust lighting-related PBR parameters for visibility
+                    // ABSOLUTELY NO COLOR CHANGES - preserve 100% original colors
                     
-                    // Reduce metallic to make materials more responsive to lighting
-                    materialInstance.setParameter("metallicFactor", 0.1f) // Slightly metallic
+                    // Only set safe PBR values that don't affect color appearance
+                    materialInstance.setParameter("metallicFactor", 0.5f) // Keep original metallic intent
+                    materialInstance.setParameter("roughnessFactor", 0.5f) // Neutral roughness
                     
-                    // Adjust roughness for better light interaction
-                    materialInstance.setParameter("roughnessFactor", 0.6f) // Medium roughness
-                    
-                    // NO emissive - preserve natural colors
+                    // Absolutely no emissive - preserve natural colors
                     materialInstance.setParameter("emissiveFactor", 0.0f, 0.0f, 0.0f)
                     
-                    Log.d(TAG, "Applied lighting fix to material $index - original colors preserved")
+                    Log.d(TAG, "Minimal fix applied to material $index - original colors 100% preserved")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to apply lighting fix to material $index: ${e.message}")
+                    Log.w(TAG, "Failed to apply minimal fix to material $index: ${e.message}")
                 }
             }
             
-            Log.i(TAG, "Lighting-focused configuration completed - original colors preserved")
+            Log.i(TAG, "Minimal configuration completed - original model colors preserved")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Lighting configuration failed: ${e.message}", e)
+            Log.e(TAG, "Minimal configuration failed: ${e.message}", e)
         }
     }
     

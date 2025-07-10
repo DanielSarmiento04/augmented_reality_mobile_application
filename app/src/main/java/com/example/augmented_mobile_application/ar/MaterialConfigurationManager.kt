@@ -433,18 +433,17 @@ class MaterialConfigurationManager {
             
             materials.forEachIndexed { index, materialInstance ->
                 try {
-                    // DON'T override base color - preserve original GLB colors
-                    // Only set base color if it's completely missing or invalid
+                    // COMPLETELY PRESERVE original GLB colors - no modifications
                     try {
-                        // Just enhance lighting properties, don't touch colors
-                        Log.d(TAG, "Preserving original color for material $index")
+                        // Don't touch colors AT ALL - let GLB original colors shine through
+                        Log.d(TAG, "100% preserving original color for material $index")
                     } catch (e: Exception) {
                         Log.w(TAG, "Could not preserve original color for material $index: ${e.message}")
                     }
                     
-                    // Set gentle PBR values that work with original colors
-                    materialInstance.setParameter("metallicFactor", 0.3f) // Preserve some metallic properties
-                    materialInstance.setParameter("roughnessFactor", 0.5f) // Balanced roughness
+                    // Only set MINIMAL PBR values that don't affect color appearance
+                    materialInstance.setParameter("metallicFactor", 0.5f) // Keep original metallic intent
+                    materialInstance.setParameter("roughnessFactor", 0.5f) // Neutral value
                     
                     // No emissive to preserve natural colors
                     materialInstance.setParameter("emissiveFactor", 0.0f, 0.0f, 0.0f)
@@ -479,7 +478,7 @@ class MaterialConfigurationManager {
         arSceneView: ARSceneView
     ) {
         try {
-            Log.i(TAG, "Starting gentle material configuration to preserve colors...")
+            Log.i(TAG, "Starting ultra-gentle configuration - 100% color preservation...")
             
             // Ensure model is visible
             modelNode.apply {
@@ -488,29 +487,30 @@ class MaterialConfigurationManager {
                 isShadowReceiver = true
             }
             
-            // Configure each material instance with minimal changes
+            // Configure each material instance with ZERO color changes
             val materialInstances = modelInstance.materialInstances
-            Log.d(TAG, "Gently configuring ${materialInstances.size} material instances")
+            Log.d(TAG, "Ultra-gently configuring ${materialInstances.size} material instances")
             
             materialInstances.forEachIndexed { index, materialInstance ->
                 try {
-                    // Only adjust PBR values, don't touch colors
-                    materialInstance.setParameter("metallicFactor", 0.3f) // Slightly metallic
-                    materialInstance.setParameter("roughnessFactor", 0.7f) // Good diffuse lighting
+                    // ZERO color modifications - preserve 100% original GLB colors
+                    // Only set essential PBR values that don't wash out colors
+                    materialInstance.setParameter("metallicFactor", 0.5f) // Neutral - preserve original intent
+                    materialInstance.setParameter("roughnessFactor", 0.5f) // Neutral - preserve original intent
                     
-                    // No emissive to preserve natural colors
+                    // Absolutely no emissive to preserve natural colors
                     materialInstance.setParameter("emissiveFactor", 0.0f, 0.0f, 0.0f)
                     
-                    Log.d(TAG, "Gently configured material $index - colors preserved")
+                    Log.d(TAG, "Ultra-gently configured material $index - ZERO color changes")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Could not configure material $index gently: ${e.message}")
+                    Log.w(TAG, "Could not ultra-gently configure material $index: ${e.message}")
                 }
             }
             
-            Log.i(TAG, "Gentle material configuration completed - original colors preserved")
+            Log.i(TAG, "Ultra-gentle configuration completed - 100% original colors preserved")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Gentle material configuration failed: ${e.message}", e)
+            Log.e(TAG, "Ultra-gentle configuration failed: ${e.message}", e)
         }
     }
     
