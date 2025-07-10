@@ -134,20 +134,28 @@ class MaterialConfigurationManager {
             val materialName = getMaterialName(materialInstance, index)
             Log.d(TAG, "Processing material: $materialName")
             
-            // Get predefined configuration or use default
+            // CRITICAL: DO NOT override baseColorFactor for multi-colored GLB models
+            // The original colors from the GLB file should be preserved exactly
+            // This prevents red objects from turning black/yellow
+            
+            // Instead, only configure PBR properties that don't affect base color
             val config = MATERIAL_CONFIGS[materialName] ?: getDefaultMaterialConfig(materialName)
             
-            // Apply color space correction and gamma adjustment
-            val correctedColor = colorSpaceManager.adjustForGltfViewer(config.baseColor, materialName)
-            try {
-                materialInstance.setParameter("baseColorFactor", correctedColor.r, correctedColor.g, correctedColor.b, correctedColor.a)
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not set baseColorFactor: ${e.message}")
-            }
+            // DO NOT apply color space correction - preserve original GLB colors
+            // val correctedColor = colorSpaceManager.adjustForGltfViewer(config.baseColor, materialName)
+            // try {
+            //     materialInstance.setParameter("baseColorFactor", correctedColor.r, correctedColor.g, correctedColor.b, correctedColor.a)
+            // } catch (e: Exception) {
+            //     Log.w(TAG, "Could not set baseColorFactor: ${e.message}")
+            // }
             
-            // Configure metallic property
+            Log.d(TAG, "PRESERVING original baseColorFactor from GLB file for material $index")
+            
+            // Configure metallic property - use conservative values
             try {
-                materialInstance.setParameter("metallicFactor", config.metallic)
+                // Use less metallic values to prevent color shifts
+                val safeMetallic = minOf(config.metallic * 0.5f, 0.3f)
+                materialInstance.setParameter("metallicFactor", safeMetallic)
             } catch (e: Exception) {
                 Log.w(TAG, "Could not set metallicFactor: ${e.message}")
             }
@@ -163,7 +171,7 @@ class MaterialConfigurationManager {
             // Configure additional PBR properties if available
             configureAdvancedMaterialProperties(materialInstance, config, environmentalIntensity)
             
-            Log.d(TAG, "Material $index configured: color=${correctedColor}, metallic=${config.metallic}, roughness=$adjustedRoughness")
+            Log.d(TAG, "Material $index configured: ORIGINAL COLORS PRESERVED, metallic=${config.metallic * 0.5f}, roughness=$adjustedRoughness")
             
         } catch (e: Exception) {
             Log.w(TAG, "Could not configure material instance $index: ${e.message}")
@@ -470,7 +478,7 @@ class MaterialConfigurationManager {
     }
     
     /**
-     * Configure model materials gently, preserving original colors
+     * Configure model materials for multi-colored GLB with sub-objects
      */
     fun configureModelMaterialsGentle(
         modelNode: ModelNode,
@@ -478,7 +486,7 @@ class MaterialConfigurationManager {
         arSceneView: ARSceneView
     ) {
         try {
-            Log.i(TAG, "Starting ultra-gentle configuration - 100% color preservation...")
+            Log.i(TAG, "Configuring multi-material GLB model with individual sub-object colors...")
             
             // Ensure model is visible
             modelNode.apply {
@@ -487,30 +495,52 @@ class MaterialConfigurationManager {
                 isShadowReceiver = true
             }
             
-            // Configure each material instance with ZERO color changes
+            // Configure each material instance as individual sub-object
             val materialInstances = modelInstance.materialInstances
-            Log.d(TAG, "Ultra-gently configuring ${materialInstances.size} material instances")
+            Log.d(TAG, "Configuring ${materialInstances.size} sub-object materials individually")
             
             materialInstances.forEachIndexed { index, materialInstance ->
                 try {
-                    // ZERO color modifications - preserve 100% original GLB colors
-                    // Only set essential PBR values that don't wash out colors
-                    materialInstance.setParameter("metallicFactor", 0.5f) // Neutral - preserve original intent
-                    materialInstance.setParameter("roughnessFactor", 0.5f) // Neutral - preserve original intent
+                    // ZERO color modifications - each sub-object keeps its unique color
+                    // Configure PBR based on material purpose/type
+                    
+                    // Attempt to optimize PBR for different material types commonly found in pump models
+                    val (metallicValue, roughnessValue, materialType) = when {
+                        // Material indices 0-1: Often main body/housing (metallic gray/black)
+                        index <= 1 -> {
+                            Triple(0.8f, 0.2f, "metallic_body")
+                        }
+                        // Material indices 2-3: Often colored components (red, yellow valves/handles)
+                        index in 2..3 -> {
+                            Triple(0.0f, 0.9f, "colored_component") 
+                        }
+                        // Material indices 4-5: Often secondary metallic parts (connectors, fittings)
+                        index in 4..5 -> {
+                            Triple(0.6f, 0.4f, "secondary_metal")
+                        }
+                        // Other materials: Mixed components
+                        else -> {
+                            Triple(0.3f, 0.7f, "mixed_component")
+                        }
+                    }
+                    
+                    // Apply optimized PBR for this specific sub-object type
+                    materialInstance.setParameter("metallicFactor", metallicValue)
+                    materialInstance.setParameter("roughnessFactor", roughnessValue)
                     
                     // Absolutely no emissive to preserve natural colors
                     materialInstance.setParameter("emissiveFactor", 0.0f, 0.0f, 0.0f)
                     
-                    Log.d(TAG, "Ultra-gently configured material $index - ZERO color changes")
+                    Log.d(TAG, "Sub-object $index ($materialType): metallic=$metallicValue, roughness=$roughnessValue")
                 } catch (e: Exception) {
-                    Log.w(TAG, "Could not ultra-gently configure material $index: ${e.message}")
+                    Log.w(TAG, "Could not configure sub-object material $index: ${e.message}")
                 }
             }
             
-            Log.i(TAG, "Ultra-gentle configuration completed - 100% original colors preserved")
+            Log.i(TAG, "Multi-material GLB configuration completed - each sub-object optimized individually")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Ultra-gentle configuration failed: ${e.message}", e)
+            Log.e(TAG, "Multi-material GLB configuration failed: ${e.message}", e)
         }
     }
     
