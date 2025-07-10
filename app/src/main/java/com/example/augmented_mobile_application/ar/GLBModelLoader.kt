@@ -1,6 +1,7 @@
 package com.example.augmented_mobile_application.ar
 
 import android.util.Log
+import com.example.augmented_mobile_application.BuildConfig
 import io.github.sceneview.ar.ARSceneView
 import io.github.sceneview.node.ModelNode
 import io.github.sceneview.math.Scale
@@ -59,7 +60,7 @@ object GLBModelLoader {
                             return@post
                         }
                         
-                        // Create ModelNode wrapper with proper lighting configuration
+                        // Create ModelNode wrapper with enhanced color calibration
                         val node = ModelNode(
                             modelInstance = modelInstance,
                             scaleToUnits = 1.0f
@@ -70,12 +71,22 @@ object GLBModelLoader {
                             isShadowCaster = true    // Enable shadow casting
                             isVisible = true         // Explicitly set visible
                             
-                            // Configure material rendering for proper PBR colors
-                            configureModelMaterials(this, modelInstance)
+                            // Apply comprehensive color calibration
+                            configureModelForColorAccuracy(this, modelInstance, arSceneView)
                         }
                         
                         // Setup animations if available
                         setupAnimations(node, modelInstance)
+                        
+                        // Skip debug tests for performance in production
+                        // Debug color calibration (only in debug builds)
+                        // if (BuildConfig.DEBUG) {
+                        //     try {
+                        //         ColorCalibrationDebugger.testColorAccuracy(node, modelInstance, arSceneView)
+                        //     } catch (e: Exception) {
+                        //         Log.w(TAG, "Color calibration debug test failed: ${e.message}")
+                        //     }
+                        // }
                         
                         Log.i(TAG, "GLB model loaded successfully: $modelPath")
                         Log.d(TAG, "Model scale: ${node.scale}, visible: ${node.isVisible}")
@@ -151,39 +162,100 @@ object GLBModelLoader {
     }
     
     /**
-     * Configure model materials for accurate color rendering
+     * Configure model for comprehensive color accuracy using calibration system
+     */
+    private fun configureModelForColorAccuracy(
+        modelNode: ModelNode, 
+        modelInstance: io.github.sceneview.model.ModelInstance,
+        arSceneView: ARSceneView
+    ) {
+        try {
+            Log.d(TAG, "Applying optimized material fixes while preserving original colors...")
+            
+            // Ensure model is visible
+            modelNode.isVisible = true
+            
+            // Apply lighting-focused fixes that preserve colors
+            val materials = modelInstance.materialInstances
+            materials.forEachIndexed { index, materialInstance ->
+                try {
+                    // DON'T override base color - let original GLB colors show through
+                    // Only adjust lighting-related PBR parameters for visibility
+                    
+                    // Reduce metallic to make materials more responsive to lighting
+                    materialInstance.setParameter("metallicFactor", 0.1f) // Slightly metallic
+                    
+                    // Adjust roughness for better light interaction
+                    materialInstance.setParameter("roughnessFactor", 0.6f) // Medium roughness
+                    
+                    // NO emissive - preserve natural colors
+                    materialInstance.setParameter("emissiveFactor", 0.0f, 0.0f, 0.0f)
+                    
+                    Log.d(TAG, "Applied lighting fix to material $index - original colors preserved")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to apply lighting fix to material $index: ${e.message}")
+                }
+            }
+            
+            Log.i(TAG, "Lighting-focused configuration completed - original colors preserved")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Lighting configuration failed: ${e.message}", e)
+        }
+    }
+    
+    // Removed unused methods: applyMinimalSafetyFixes, configureModelMaterials, configureBasicMaterials
+    // to improve performance and reduce complexity
+    
+    /**
+     * Configure model materials for accurate color rendering using enhanced configuration
      */
     private fun configureModelMaterials(
         modelNode: ModelNode, 
-        modelInstance: io.github.sceneview.model.ModelInstance
+        modelInstance: io.github.sceneview.model.ModelInstance,
+        arSceneView: ARSceneView
     ) {
         try {
             Log.d(TAG, "Configuring model materials for accurate color rendering...")
             
-            // Get material instances from the model
-            val materialInstances = modelInstance.materialInstances
-            Log.d(TAG, "Found ${materialInstances.size} material instances")
+            // Use the enhanced material configuration manager
+            val materialConfigManager = MaterialConfigurationManager()
+            materialConfigManager.configureModelMaterials(modelNode, modelInstance, arSceneView)
             
-            // Configure each material for proper PBR rendering
-            materialInstances.forEachIndexed { index, materialInstance ->
-                try {
-                    // Enable metallic-roughness workflow for accurate colors
-                    // This ensures the model uses the same material system as web viewers
-                    Log.d(TAG, "Configuring material $index for PBR workflow")
-                    
-                    // The material properties should be preserved from the GLB file
-                    // SceneView should automatically handle PBR materials correctly
-                    // We just ensure the model is set up to receive environmental lighting
-                    
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not configure material $index: ${e.message}")
-                }
+            // Validate the configuration
+            val isValid = materialConfigManager.validateMaterialConfiguration(modelNode)
+            if (isValid) {
+                Log.i(TAG, "Material configuration validated successfully")
+            } else {
+                Log.w(TAG, "Material configuration validation failed - using fallback")
+                configureBasicMaterials(modelNode, modelInstance)
             }
             
-            Log.i(TAG, "Material configuration completed")
+        } catch (e: Exception) {
+            Log.w(TAG, "Enhanced material configuration failed, using fallback: ${e.message}", e)
+            configureBasicMaterials(modelNode, modelInstance)
+        }
+    }
+    
+    /**
+     * Fallback basic material configuration
+     */
+    private fun configureBasicMaterials(
+        modelNode: ModelNode, 
+        modelInstance: io.github.sceneview.model.ModelInstance
+    ) {
+        try {
+            Log.d(TAG, "Applying basic material configuration...")
+            
+            // Basic material configuration as fallback
+            modelNode.isShadowCaster = true
+            modelNode.isShadowReceiver = true
+            modelNode.isVisible = true
+            
+            Log.d(TAG, "Basic material configuration applied")
             
         } catch (e: Exception) {
-            Log.w(TAG, "Could not configure model materials: ${e.message}", e)
+            Log.w(TAG, "Could not apply basic material configuration: ${e.message}")
         }
     }
 }

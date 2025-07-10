@@ -46,7 +46,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
 import com.example.augmented_mobile_application.ar.SurfaceChecker
 import com.example.augmented_mobile_application.ui.components.SurfaceQualityIndicator
-import com.example.augmented_mobile_application.ui.components.SurfaceOverlay
+// import com.example.augmented_mobile_application.ui.components.SurfaceOverlay // DISABLED to prevent rectangle overlay
 import com.example.augmented_mobile_application.repository.RoutineRepository
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
 import androidx.compose.runtime.LaunchedEffect
@@ -522,64 +522,47 @@ fun ARView(
 
                                 // Enable plane visualization with error handling
                                 try {
-                                    sceneView.planeRenderer.isEnabled = true
-                                    Log.i(TAG, "Plane renderer enabled")
+                                    // Disable plane renderer to prevent overlays
+                                    sceneView.planeRenderer.isEnabled = false
+                                    Log.i(TAG, "Plane renderer disabled to prevent overlays")
                                 } catch (e: Exception) {
-                                    Log.w(TAG, "Could not enable plane renderer: ${e.message}")
-                                    // Continue without plane renderer
+                                    Log.w(TAG, "Could not disable plane renderer: ${e.message}")
                                 }
 
-                                // Configure scene lighting for accurate model colors
+                                // Configure basic lighting only (skip complex calibration for performance)
                                 try {
-                                    // Enable environmental lighting for PBR materials
-                                    sceneView.scene?.let { scene ->
-                                        // The scene should automatically use environmental lighting
-                                        // when light estimation is enabled
-                                        Log.i(TAG, "Scene lighting configured for PBR rendering")
-                                    }
+                                    // Simple lighting configuration for performance
+                                    val lightingManager = com.example.augmented_mobile_application.ar.LightingConfigurationManager()
+                                    lightingManager.configureLighting(sceneView)
+                                    Log.i(TAG, "Basic lighting configuration applied for performance")
                                 } catch (e: Exception) {
-                                    Log.w(TAG, "Could not configure scene lighting: ${e.message}")
+                                    Log.w(TAG, "Could not configure basic lighting: ${e.message}")
                                 }
 
-                                // Set up frame callback with surface quality monitoring
-                                var lastFrameTimestamp = 0L
+                                // Set up optimized frame callback
+                                var frameCount = 0
                                 sceneView.onFrame = { frameTime ->
                                     try {
+                                        frameCount++
                                         val currentFrame: ArFrame? = sceneView.frame
                                         if (currentFrame != null && currentFrame.camera.trackingState == TrackingState.TRACKING) {
                                             
-                                            // Validate timestamp monotonicity
-                                            val currentTimestamp = currentFrame.timestamp
-                                            if (lastFrameTimestamp > 0 && currentTimestamp <= lastFrameTimestamp) {
-                                                Log.w(TAG, "Non-monotonic timestamp detected: $currentTimestamp <= $lastFrameTimestamp")
-                                                // Skip this frame to maintain monotonicity - use different approach
-                                            } else {
-                                                lastFrameTimestamp = currentTimestamp
-                                                
-                                                // Process plane detection
+                                            // Only process planes occasionally for performance
+                                            if (frameCount % 10 == 0) { // Every 10 frames instead of every frame
                                                 val planes = currentFrame.getUpdatedTrackables(Plane::class.java)
                                                 isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
-                                                
-                                                // Update surface quality periodically (every 30 frames to avoid performance impact)
-                                                if (frameTime.toLong() % 30 == 0L) {
-                                                    modelPlacementCoordinator.value?.let { coordinator ->
-                                                        try {
-                                                            val overallQuality = coordinator.getOverallSurfaceQuality()
-                                                            surfaceQuality = overallQuality
-                                                        } catch (e: Exception) {
-                                                            Log.w(TAG, "Error updating surface quality: ${e.message}")
-                                                        }
-                                                    }
-                                                }
                                             }
+                                            
+                                            // Skip surface quality updates for performance
                                         } else {
-                                            // Clear surface quality when not tracking
-                                            surfaceQuality = null
-                                            isPlacementReady = false
+                                            // Only clear when tracking is completely lost
+                                            if (frameCount % 30 == 0) { // Every 30 frames
+                                                isPlacementReady = false
+                                            }
                                         }
                                     } catch (e: Exception) {
-                                        // Throttled error logging to avoid spam
-                                        if (System.currentTimeMillis() % 10000 == 0L) {
+                                        // Minimal error logging to avoid performance impact
+                                        if (frameCount % 300 == 0) { // Every 300 frames (every 10 seconds at 30fps)
                                             Log.w(TAG, "Frame processing error: ${e.message}")
                                         }
                                     }
@@ -620,18 +603,19 @@ fun ARView(
                                 if (maintenanceStarted && !modelPlaced) {
                                     arSceneViewRef.value?.let { arSceneView ->
                                         try {
+                                            // Skip surface quality check for now to prevent overlay issues
                                             // First check surface quality at touch point
-                                            val coordinator = modelPlacementCoordinator.value
-                                            val surfaceQualityAtTouch = coordinator?.checkSurfaceQuality(event.x, event.y)
+                                            // val coordinator = modelPlacementCoordinator.value
+                                            // val surfaceQualityAtTouch = coordinator?.checkSurfaceQuality(event.x, event.y)
                                             
-                                            if (surfaceQualityAtTouch != null && !surfaceQualityAtTouch.isGoodQuality) {
-                                                Log.w(TAG, "Surface quality insufficient at touch point:")
-                                                surfaceQualityAtTouch.issues.forEach { issue ->
-                                                    Log.w(TAG, "  - $issue")
-                                                }
-                                                Log.i(TAG, "Consider using force placement or finding a better surface")
-                                                return@pointerInteropFilter false
-                                            }
+                                            // if (surfaceQualityAtTouch != null && !surfaceQualityAtTouch.isGoodQuality) {
+                                            //     Log.w(TAG, "Surface quality insufficient at touch point:")
+                                            //     surfaceQualityAtTouch.issues.forEach { issue ->
+                                            //         Log.w(TAG, "  - $issue")
+                                            //     }
+                                            //     Log.i(TAG, "Consider using force placement or finding a better surface")
+                                            //     return@pointerInteropFilter false
+                                            // }
                                             
                                             val frame = arSceneView.frame
                                             if (frame != null && frame.camera.trackingState == TrackingState.TRACKING) {
@@ -649,6 +633,7 @@ fun ARView(
                                                     
                                                     if (validHit != null) {
                                                         // Place on validated surface
+                                                        val coordinator = modelPlacementCoordinator.value
                                                         val placementSuccess = coordinator?.placeModelAtHitResult(validHit)
                                                         if (placementSuccess == true) {
                                                             arViewModel.onModelPlaced()
