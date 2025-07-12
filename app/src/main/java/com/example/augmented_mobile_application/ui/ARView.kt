@@ -467,17 +467,18 @@ fun ARView(
                                         config.focusMode = Config.FocusMode.AUTO
                                         config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                                         
-                                        // Enable light estimation for proper PBR material rendering
-                                        // Try ENVIRONMENTAL_HDR first, fallback to AMBIENT_INTENSITY if not available
+                                        // Enable light estimation for superior PBR material rendering and color accuracy
                                         try {
+                                            // Environmental HDR provides the best color accuracy for PBR materials
                                             config.lightEstimationMode = Config.LightEstimationMode.ENVIRONMENTAL_HDR
-                                            Log.i(TAG, "Using ENVIRONMENTAL_HDR light estimation for best color accuracy")
+                                            Log.i(TAG, "Using ENVIRONMENTAL_HDR for superior color accuracy and PBR rendering")
                                         } catch (e: Exception) {
                                             try {
+                                                // Fallback to ambient intensity for basic color accuracy
                                                 config.lightEstimationMode = Config.LightEstimationMode.AMBIENT_INTENSITY
-                                                Log.i(TAG, "Using AMBIENT_INTENSITY light estimation (fallback)")
+                                                Log.i(TAG, "Using AMBIENT_INTENSITY for basic color accuracy (fallback)")
                                             } catch (e2: Exception) {
-                                                Log.w(TAG, "Light estimation not available, colors may be less accurate")
+                                                Log.w(TAG, "Light estimation not available, colors may appear less accurate")
                                                 config.lightEstimationMode = Config.LightEstimationMode.DISABLED
                                             }
                                         }
