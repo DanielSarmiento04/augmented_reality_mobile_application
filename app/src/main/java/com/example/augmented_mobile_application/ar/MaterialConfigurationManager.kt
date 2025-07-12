@@ -151,12 +151,11 @@ class MaterialConfigurationManager {
             
             Log.d(TAG, "PRESERVING original baseColorFactor from GLB file for material $index")
             
-            // Configure metallic property - use very conservative values to avoid color shifts
+            // Configure metallic property - use conservative values
             try {
-                // Use minimal metallic values to prevent color distortion
-                val safeMetallic = 0.1f  // Very low metallic to preserve original colors
+                // Use less metallic values to prevent color shifts
+                val safeMetallic = minOf(config.metallic * 0.5f, 0.3f)
                 materialInstance.setParameter("metallicFactor", safeMetallic)
-                Log.d(TAG, "Material $index: Set conservative metallic factor: $safeMetallic")
             } catch (e: Exception) {
                 Log.w(TAG, "Could not set metallicFactor: ${e.message}")
             }
