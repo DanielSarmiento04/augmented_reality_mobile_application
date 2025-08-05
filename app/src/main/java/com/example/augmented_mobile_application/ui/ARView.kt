@@ -6,6 +6,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -48,7 +50,6 @@ import com.example.augmented_mobile_application.ar.SurfaceChecker
 import com.example.augmented_mobile_application.ar.YOLODetectionManager
 import com.example.augmented_mobile_application.ui.components.SurfaceQualityIndicator
 import com.example.augmented_mobile_application.ui.components.YOLODetectionOverlay
-import com.example.augmented_mobile_application.ui.components.YOLODetectionStatus
 // import com.example.augmented_mobile_application.ui.components.SurfaceOverlay // DISABLED to prevent rectangle overlay
 import com.example.augmented_mobile_application.repository.RoutineRepository
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
@@ -742,7 +743,7 @@ fun ARView(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing)
         ) {
-            // Top pane - Step information (expandable)
+            // Top pane - Step information with YOLO integration (expandable)
             TopStepPane(
                 machineSelected = machine_selected,
                 stepDescription = stepDescription,
@@ -755,6 +756,19 @@ fun ARView(
                 surfaceQuality = surfaceQuality,
                 tips = arViewModel.getCurrentStepTips(),
                 mediaPath = arViewModel.getCurrentStepMedia(),
+                // YOLO integration parameters
+                yoloEnabled = yoloEnabled,
+                isDetecting = isDetecting,
+                detectionCount = detectionCount,
+                detections = detections,
+                onToggleYolo = { 
+                    arViewModel.toggleYoloDetection()
+                    if (arViewModel.yoloEnabled.value) {
+                        yoloDetectionManager.enableDetection()
+                    } else {
+                        yoloDetectionManager.disableDetection()
+                    }
+                },
                 modifier = Modifier.weight(1f)
             )
             
@@ -801,32 +815,11 @@ fun ARView(
                 modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
             )
         }
-        
-        // YOLO Detection Status (Top Right)
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.TopEnd
-        ) {
-            YOLODetectionStatus(
-                yoloEnabled = arViewModel.yoloEnabled,
-                isDetecting = arViewModel.isDetecting,
-                detectionCount = arViewModel.detectionCount,
-                onToggleYolo = { 
-                    arViewModel.toggleYoloDetection()
-                    if (arViewModel.yoloEnabled.value) {
-                        yoloDetectionManager.enableDetection()
-                    } else {
-                        yoloDetectionManager.disableDetection()
-                    }
-                },
-                modifier = Modifier.padding(top = 60.dp, end = 16.dp)
-            )
-        }
     }
 }
 
 /**
- * Top pane containing step information with animation
+ * Top pane containing step information with YOLO integration and animation
  */
 @Composable
 private fun TopStepPane(
@@ -841,6 +834,12 @@ private fun TopStepPane(
     surfaceQuality: com.example.augmented_mobile_application.ar.SurfaceQualityChecker.SurfaceQuality?,
     tips: List<String>,
     mediaPath: String?,
+    // YOLO integration parameters
+    yoloEnabled: Boolean,
+    isDetecting: Boolean,
+    detectionCount: Int,
+    detections: List<com.example.augmented_mobile_application.ai.YOLO11Detector.Detection>,
+    onToggleYolo: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -923,6 +922,137 @@ private fun TopStepPane(
                         modifier = Modifier.fillMaxWidth(),
                         color = DarkGreen
                     )
+                }
+                
+                // YOLO Detection Section
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (yoloEnabled) DarkGreen.copy(alpha = 0.1f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Visibility,
+                                    contentDescription = "YOLO Detection",
+                                    tint = if (yoloEnabled) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Detección de Objetos",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (yoloEnabled) DarkGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            
+                            Switch(
+                                checked = yoloEnabled,
+                                onCheckedChange = { onToggleYolo() },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = DarkGreen,
+                                    checkedTrackColor = DarkGreen.copy(alpha = 0.3f)
+                                )
+                            )
+                        }
+                        
+                        if (yoloEnabled) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            
+                            // Detection status and count
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // Detection indicator
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .background(
+                                                color = if (isDetecting) Color.Green else Color.Gray,
+                                                shape = androidx.compose.foundation.shape.CircleShape
+                                            )
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = if (isDetecting) "Detectando..." else "En espera",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                
+                                Text(
+                                    text = "$detectionCount objetos detectados",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = DarkGreen
+                                )
+                            }
+                            
+                            // Active detections summary
+                            if (detections.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                val detectionsByClass = detections.groupBy { it.classId }
+                                
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    items(detectionsByClass.entries.toList()) { (classId, classDetections) ->
+                                        val className = when (classId) {
+                                            0 -> "Bomba"
+                                            1 -> "Tubería"
+                                            2 -> "Tubería de acero"
+                                            3 -> "Cable eléctrico"
+                                            else -> "Objeto"
+                                        }
+                                        
+                                        Card(
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = when (classId) {
+                                                    0 -> Color.Red.copy(alpha = 0.2f)
+                                                    1 -> Color.Blue.copy(alpha = 0.2f)
+                                                    2 -> Color.Cyan.copy(alpha = 0.2f)
+                                                    3 -> Color.Yellow.copy(alpha = 0.2f)
+                                                    else -> Color.Gray.copy(alpha = 0.2f)
+                                                }
+                                            ),
+                                            modifier = Modifier.padding(vertical = 2.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = "${classDetections.size}",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = className,
+                                                    style = MaterialTheme.typography.labelSmall
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 
                 // Tips section (if available)
