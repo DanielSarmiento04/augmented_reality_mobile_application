@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
 import com.example.augmented_mobile_application.repository.RoutineRepository
+import com.example.augmented_mobile_application.ai.YOLO11Detector
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,19 @@ class ARViewModel(private val context: Context) : ViewModel() {
     
     private val _modelPlaced = MutableStateFlow(false)
     val modelPlaced: StateFlow<Boolean> = _modelPlaced.asStateFlow()
+    
+    // YOLO Detection state
+    private val _yoloEnabled = MutableStateFlow(true)
+    val yoloEnabled: StateFlow<Boolean> = _yoloEnabled.asStateFlow()
+    
+    private val _detections = MutableStateFlow<List<YOLO11Detector.Detection>>(emptyList())
+    val detections: StateFlow<List<YOLO11Detector.Detection>> = _detections.asStateFlow()
+    
+    private val _isDetecting = MutableStateFlow(false)
+    val isDetecting: StateFlow<Boolean> = _isDetecting.asStateFlow()
+    
+    private val _detectionCount = MutableStateFlow(0)
+    val detectionCount: StateFlow<Int> = _detectionCount.asStateFlow()
     
     private val defaultInstructions = listOf(
         "Mueva lentamente el dispositivo para detectar superficies planas",
@@ -111,7 +125,23 @@ class ARViewModel(private val context: Context) : ViewModel() {
         _maintenanceStarted.value = false
         _modelPlaced.value = false
         _currentStep.value = 0
+        _detections.value = emptyList()
+        _detectionCount.value = 0
         updateStepDescription()
+    }
+    
+    // YOLO Detection methods
+    fun toggleYoloDetection() {
+        _yoloEnabled.value = !_yoloEnabled.value
+    }
+    
+    fun updateDetections(newDetections: List<YOLO11Detector.Detection>) {
+        _detections.value = newDetections
+        _detectionCount.value = newDetections.size
+    }
+    
+    fun setDetecting(detecting: Boolean) {
+        _isDetecting.value = detecting
     }
     
     fun canNavigatePrevious(): Boolean {

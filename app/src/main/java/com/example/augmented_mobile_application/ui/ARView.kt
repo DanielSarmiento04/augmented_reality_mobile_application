@@ -45,7 +45,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import com.example.augmented_mobile_application.ar.ModelPlacementCoordinator
 import com.example.augmented_mobile_application.ar.SurfaceChecker
+import com.example.augmented_mobile_application.ar.YOLODetectionManager
 import com.example.augmented_mobile_application.ui.components.SurfaceQualityIndicator
+import com.example.augmented_mobile_application.ui.components.YOLODetectionOverlay
+import com.example.augmented_mobile_application.ui.components.YOLODetectionStatus
 // import com.example.augmented_mobile_application.ui.components.SurfaceOverlay // DISABLED to prevent rectangle overlay
 import com.example.augmented_mobile_application.repository.RoutineRepository
 import com.example.augmented_mobile_application.model.MaintenanceRoutine
@@ -87,6 +90,12 @@ fun ARView(
     val isLoadingRoutine by arViewModel.isLoadingRoutine.collectAsState()
     val maintenanceStarted by arViewModel.maintenanceStarted.collectAsState()
     val modelPlaced by arViewModel.modelPlaced.collectAsState()
+    
+    // YOLO Detection state
+    val yoloEnabled by arViewModel.yoloEnabled.collectAsState()
+    val detections by arViewModel.detections.collectAsState()
+    val isDetecting by arViewModel.isDetecting.collectAsState()
+    val detectionCount by arViewModel.detectionCount.collectAsState()
     
     // Determine the model path - use provided glbPath or default
     val modelPath = glbPath ?: "pump/pump.glb"
@@ -277,6 +286,11 @@ fun ARView(
     val arSceneViewRef = remember { mutableStateOf<ARSceneView?>(null) }
     val modelPlacementCoordinator = remember { mutableStateOf<ModelPlacementCoordinator?>(null) }
     val surfaceChecker = remember { SurfaceChecker() }
+    
+    // YOLO Detection Manager
+    val yoloDetectionManager = remember { 
+        YOLODetectionManager(context, scope)
+    }
 
     // ARSceneView initialization state
     var arSceneViewError by remember { mutableStateOf<String?>(null) }
@@ -332,6 +346,11 @@ fun ARView(
                 try {
                     performanceMonitor = com.example.augmented_mobile_application.utils.ARPerformanceMonitor(sceneView)
                     Log.i(TAG, "Performance monitoring initialized")
+                    
+                    // Initialize YOLO detection
+                    yoloDetectionManager.initialize()
+                    yoloDetectionManager.setARSceneView(sceneView)
+                    Log.i(TAG, "YOLO detection manager initialized")
                 } catch (e: Exception) {
                     Log.w(TAG, "Could not initialize performance monitoring: ${e.message}")
                 }
@@ -353,6 +372,19 @@ fun ARView(
         }
     }
     
+    // Sync YOLO detections with ViewModel
+    LaunchedEffect(Unit) {
+        yoloDetectionManager.detections.collect { detections ->
+            arViewModel.updateDetections(detections)
+        }
+    }
+    
+    LaunchedEffect(Unit) {
+        yoloDetectionManager.isDetecting.collect { detecting ->
+            arViewModel.setDetecting(detecting)
+        }
+    }
+    
     // ARView lifecycle management
     DisposableEffect(Unit) {
         Log.i(TAG, "ARView lifecycle started")
@@ -362,6 +394,9 @@ fun ARView(
             try {
                 // Clear surface checker
                 surfaceChecker.clearHistory()
+                
+                // Cleanup YOLO detection
+                yoloDetectionManager.cleanup()
                 
                 // Stop any running coroutines
                 scope.launch {
@@ -553,6 +588,11 @@ fun ARView(
                                                 isPlacementReady = planes.isNotEmpty() && planes.any { it.trackingState == TrackingState.TRACKING }
                                             }
                                             
+                                            // Process YOLO detection occasionally for performance
+                                            if (frameCount % 15 == 0 && yoloEnabled) { // Every 15 frames for YOLO
+                                                yoloDetectionManager.processFrame()
+                                            }
+                                            
                                             // Skip surface quality updates for performance
                                         } else {
                                             // Only clear when tracking is completely lost
@@ -684,6 +724,18 @@ fun ARView(
             )
         }
 
+        // YOLO Detection Overlay
+        if (yoloEnabled && detections.isNotEmpty()) {
+            YOLODetectionOverlay(
+                detections = arViewModel.detections,
+                yoloEnabled = arViewModel.yoloEnabled,
+                detectionCount = arViewModel.detectionCount,
+                screenWidth = LocalContext.current.resources.displayMetrics.widthPixels.toFloat(),
+                screenHeight = LocalContext.current.resources.displayMetrics.heightPixels.toFloat(),
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         // Main UI overlay with two-pane layout
         Column(
             modifier = Modifier
@@ -747,6 +799,27 @@ fun ARView(
                     }
                 },
                 modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+            )
+        }
+        
+        // YOLO Detection Status (Top Right)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopEnd
+        ) {
+            YOLODetectionStatus(
+                yoloEnabled = arViewModel.yoloEnabled,
+                isDetecting = arViewModel.isDetecting,
+                detectionCount = arViewModel.detectionCount,
+                onToggleYolo = { 
+                    arViewModel.toggleYoloDetection()
+                    if (arViewModel.yoloEnabled.value) {
+                        yoloDetectionManager.enableDetection()
+                    } else {
+                        yoloDetectionManager.disableDetection()
+                    }
+                },
+                modifier = Modifier.padding(top = 60.dp, end = 16.dp)
             )
         }
     }
